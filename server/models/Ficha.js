@@ -1,0 +1,14 @@
+import mongoose from 'mongoose'
+
+const fichaSchema = new mongoose.Schema({
+  codigoFicha: { type: String, required: true, unique: true },
+  nombrePrograma: { type: String, required: true },
+  jornada: { type: String, enum: ['Diurna', 'Nocturna', 'Mixta'], default: 'Diurna' },
+  aulaAsignada: { type: String, required: true },
+  instructorLiderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Instructor', default: null },
+  instructores: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Instructor' }],
+  fechaInicio: { type: String, required: true },
+  fechaFin: { type: String, required: true },
+}, { timestamps: true, collection: 'fichas' })
+
+export default mongoose.model('Ficha', fichaSchema)
