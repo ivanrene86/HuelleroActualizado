@@ -1,4 +1,0 @@
-Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Es_Lider,Jornada
-CC,1055443301,Fernando,Suárez,Masculino,fernando.suarez@sena.edu.co,3201234567,2670123,SI,Diurna
-CC,1055443302,Patricia,Jaramillo,Femenino,patricia.jaramillo@sena.edu.co,3212345678,2891234,SI,Nocturna
-CC,1055443303,Roberto,Gómez,Masculino,roberto.gomez@sena.edu.co,3223456789,2670123,NO,Diurna
