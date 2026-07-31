@@ -34,6 +34,7 @@ export default {
     create(body) { return request('/instructores', { method: 'POST', body: JSON.stringify(body) }) },
     update(id, body) { return request(`/instructores/${id}`, { method: 'PUT', body: JSON.stringify(body) }) },
     delete(id) { return request(`/instructores/${id}`, { method: 'DELETE' }) },
+    importar(instructores) { return request('/instructores/importar', { method: 'POST', body: JSON.stringify({ instructores }) }) },
   },
 
   fichas: {
@@ -42,6 +43,7 @@ export default {
     create(body) { return request('/fichas', { method: 'POST', body: JSON.stringify(body) }) },
     update(id, body) { return request(`/fichas/${id}`, { method: 'PUT', body: JSON.stringify(body) }) },
     delete(id) { return request(`/fichas/${id}`, { method: 'DELETE' }) },
+    importar(fichas) { return request('/fichas/importar', { method: 'POST', body: JSON.stringify({ fichas }) }) },
   },
 
   estudiantes: {
@@ -54,17 +56,6 @@ export default {
     enrolarHuella(id, huellaTemplate) { return request(`/estudiantes/${id}/enrolar-huella`, { method: 'PUT', body: JSON.stringify({ huellaTemplate }) }) },
     delete(id) { return request(`/estudiantes/${id}`, { method: 'DELETE' }) },
     importar(estudiantes) { return request('/estudiantes/importar', { method: 'POST', body: JSON.stringify({ estudiantes }) }) },
-  },
-
-  excusas: {
-    getAll(params = {}) {
-      const query = new URLSearchParams(params).toString()
-      return request(`/excusas${query ? '?' + query : ''}`)
-    },
-    create(body) { return request('/excusas', { method: 'POST', body: JSON.stringify(body) }) },
-    update(id, body) { return request(`/excusas/${id}`, { method: 'PUT', body: JSON.stringify(body) }) },
-    aprobar(id) { return request(`/excusas/${id}/aprobar`, { method: 'PUT' }) },
-    rechazar(id, motivoRechazo) { return request(`/excusas/${id}/rechazar`, { method: 'PUT', body: JSON.stringify({ motivoRechazo }) }) },
   },
 
   asistencias: {

@@ -4,11 +4,9 @@ import AdminPerfil from './components/AdminPerfil.vue'
 import Instructores from './components/Instructores.vue'
 import Fichas from './components/Fichas.vue'
 import Estudiantes from './components/Estudiantes.vue'
-import ConsultaEstudiante from './components/ConsultaEstudiante.vue'
 import ImportarUsuarios from './components/ImportarUsuarios.vue'
 import Dashboard from './components/Dashboard.vue'
 import Reportes from './components/Reportes.vue'
-import Excusas from './components/Excusas.vue'
 import DiasFestivos from './components/DiasFestivos.vue'
 import PanelInstructor from './components/PanelInstructor.vue'
 import PanelEstudiante from './components/PanelEstudiante.vue'
@@ -33,11 +31,9 @@ const views = {
   perfil: { component: AdminPerfil, label: 'Perfil', roles: ['Administrador', 'Instructor'] },
   instructores: { component: Instructores, label: 'Instructores', roles: ['Administrador'] },
   estudiantes: { component: Estudiantes, label: 'Estudiantes', roles: ['Administrador', 'Instructor'] },
-  consulta: { component: ConsultaEstudiante, label: 'Consulta Rápida', roles: ['Administrador', 'Instructor', 'Estudiante'] },
   fichas: { component: Fichas, label: 'Fichas', roles: ['Administrador'] },
-  importar: { component: ImportarUsuarios, label: 'Importar', roles: ['Administrador'] },
+  importar: { component: ImportarUsuarios, label: 'Importar / Carga Masiva', roles: ['Administrador', 'Instructor'] },
   reportes: { component: Reportes, label: 'Reportes', roles: ['Administrador', 'Instructor'] },
-  excusas: { component: Excusas, label: 'Excusas', roles: ['Administrador', 'Instructor'] },
   diasFestivos: { component: DiasFestivos, label: 'Días Festivos', roles: ['Administrador'] },
 }
 
@@ -59,6 +55,18 @@ const currentComponent = computed(() => {
   if (usuario.value?.rol === 'Instructor') return PanelInstructor
   if (usuario.value?.rol === 'Estudiante') return PanelEstudiante
   return Dashboard
+})
+
+const headerTitulo = computed(() => {
+  if (usuario.value?.rol === 'Instructor') return 'Panel Instructor'
+  if (usuario.value?.rol === 'Estudiante') return 'Panel Aprendiz'
+  return 'Panel Admin'
+})
+
+const headerSubtitulo = computed(() => {
+  if (usuario.value?.rol === 'Instructor') return 'Docente SENA'
+  if (usuario.value?.rol === 'Estudiante') return 'Aprendiz SENA'
+  return 'Administración SENA'
 })
 
 const estadoSistema = reactive({
@@ -176,8 +184,8 @@ onUnmounted(() => {
 
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-header">
-        <h2>Admin Panel</h2>
-        <span>SENA</span>
+        <h2>{{ headerTitulo }}</h2>
+        <span>{{ headerSubtitulo }}</span>
       </div>
       <nav class="sidebar-nav">
         <a

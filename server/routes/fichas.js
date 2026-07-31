@@ -78,4 +78,17 @@ router.delete('/:id', async (req, res) => {
   }
 })
 
+router.post('/importar', async (req, res) => {
+  try {
+    const { fichas } = req.body
+    if (!fichas || !Array.isArray(fichas)) {
+      return res.status(400).json({ error: 'Se requiere un array de fichas' })
+    }
+    const result = await Ficha.insertMany(fichas)
+    res.status(201).json({ ok: true, count: result.length })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

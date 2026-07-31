@@ -3,23 +3,58 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import api from '../services/api.js'
 
 const toast = ref({ show: false, message: '', type: '' })
-const tipoImportacion = ref('estudiantes')
+const tipoImportacion = ref('estudiantes') // 'estudiantes', 'instructores', 'fichas'
 const archivoNombre = ref('')
 const registros = ref([])
 const errores = ref([])
+const advertencias = ref([])
 const importado = ref(false)
 const loading = ref(false)
 
-const HEADERS_ESPERADOS = ['Tipo_Doc', 'Num_Doc', 'Nombres', 'Apellidos', 'Genero', 'Correo', 'Telefono', 'Ficha', 'Jornada']
+const userStr = sessionStorage.getItem('user_data')
+const usuario = ref(userStr ? JSON.parse(userStr) : { id: '', rol: 'Administrador' })
+const esLider = ref(false)
+const permisoCarga = ref(true)
+
+const HEADERS_ESTUDIANTES = ['Tipo_Doc', 'Num_Doc', 'Nombres', 'Apellidos', 'Genero', 'Correo', 'Telefono', 'Ficha', 'Jornada']
+const HEADERS_INSTRUCTORES = ['Tipo_Doc', 'Num_Doc', 'Nombres', 'Apellidos', 'Genero', 'Correo', 'Telefono', 'Ficha', 'Es_Lider', 'Jornada']
+const HEADERS_FICHAS = ['Codigo_Ficha', 'Nombre_Programa', 'Jornada', 'Aula_Asignada', 'Fecha_Inicio', 'Fecha_Fin']
+
+const headersEsperados = computed(() => {
+  if (tipoImportacion.value === 'fichas') return HEADERS_FICHAS
+  if (tipoImportacion.value === 'instructores') return HEADERS_INSTRUCTORES
+  return HEADERS_ESTUDIANTES
+})
 
 const fichasList = ref([])
 
 onMounted(async () => {
-  try { fichasList.value = await api.fichas.getAll() } catch (e) {}
+  try {
+    fichasList.value = await api.fichas.getAll()
+  } catch (e) {}
+
+  if (usuario.value.rol === 'Instructor') {
+    try {
+      const misFichas = await api.fichas.getMisFichas(usuario.value.id)
+      esLider.value = misFichas.some(f => f.esLider)
+      if (!esLider.value) {
+        permisoCarga.value = false
+      }
+    } catch (e) {
+      permisoCarga.value = false
+    }
+  }
 })
 
 function getFichaPorCodigo(codigo) {
-  return fichasList.value.find(f => f.codigoFicha.toLowerCase() === codigo.toLowerCase())
+  if (!codigo) return null
+  return fichasList.value.find(f => String(f.codigoFicha).toLowerCase() === String(codigo).toLowerCase())
+}
+
+function getInstructorNombre(id) {
+  if (!id) return ''
+  if (typeof id === 'object') return `${id.nombres || ''} ${id.apellidos || ''}`.trim()
+  return ''
 }
 
 function showToastFn(message, type = 'success') {
@@ -30,7 +65,7 @@ function showToastFn(message, type = 'success') {
 function parsearCSV(texto) {
   const lineas = texto.split(/\r?\n/).filter(l => l.trim())
   if (lineas.length < 2) {
-    showToastFn('El archivo debe tener al menos una linea de cabecera y datos', 'error')
+    showToastFn('El archivo debe tener al menos una línea de cabecera y datos', 'error')
     return { headers: [], rows: [] }
   }
   const headers = parsearLineaCSV(lineas[0]).map(h => h.trim())
@@ -59,19 +94,62 @@ function parsearLineaCSV(linea) {
   return resultado
 }
 
-function validarHeaders(headers) { return HEADERS_ESPERADOS.every(h => headers.includes(h)) }
+function validarHeaders(headers) {
+  return headersEsperados.value.every(h => headers.includes(h))
+}
 
-function validarFila(row, index) {
+function validarFila(row) {
   const errs = []
-  for (const h of HEADERS_ESPERADOS) { if (!row[h]) errs.push(`Falta el campo obligatorio: ${h}`) }
-  if (row.Tipo_Doc && !['CC', 'CE', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) errs.push(`Tipo_Doc invalido: "${row.Tipo_Doc}". Debe ser CC, CE o PEP`)
-  if (row.Correo && !row.Correo.includes('@')) errs.push(`Correo invalido: "${row.Correo}"`)
-  if (row.Ficha) {
-    const ficha = getFichaPorCodigo(row.Ficha)
-    if (!ficha) errs.push(`Ficha no encontrada: "${row.Ficha}"`)
-    else if (row.Jornada && ficha.jornada !== row.Jornada) errs.push(`Jornada "${row.Jornada}" no coincide con la ficha "${row.Ficha}" (${ficha.jornada})`)
+  const requeridos = headersEsperados.value
+
+  for (const h of requeridos) {
+    if (row[h] === undefined || row[h] === null || row[h] === '') {
+      errs.push(`Falta el campo obligatorio: ${h}`)
+    }
+  }
+
+  if (tipoImportacion.value === 'fichas') {
+    if (row.Jornada && !['Mañana', 'Tarde', 'Noche', 'Diurna', 'Nocturna', 'Mixta'].includes(row.Jornada)) {
+      errs.push(`Jornada inválida: "${row.Jornada}". Debe ser Mañana, Tarde o Noche`)
+    }
+  } else {
+    if (row.Tipo_Doc && !['CC', 'CE', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) {
+      errs.push(`Tipo_Doc inválido: "${row.Tipo_Doc}". Debe ser CC, CE o PEP`)
+    }
+    if (row.Correo && !row.Correo.includes('@')) {
+      errs.push(`Correo inválido: "${row.Correo}"`)
+    }
+    if (row.Ficha) {
+      const ficha = getFichaPorCodigo(row.Ficha)
+      if (!ficha) {
+        errs.push(`Ficha no encontrada: "${row.Ficha}". Debes crear la ficha previamente o cargar el archivo de fichas`)
+      } else if (row.Jornada && ficha.jornada !== row.Jornada) {
+        errs.push(`Jornada "${row.Jornada}" no coincide con la ficha "${row.Ficha}" (${ficha.jornada})`)
+      }
+    }
+    if (tipoImportacion.value === 'instructores' && row.Es_Lider) {
+      const valLider = String(row.Es_Lider).trim().toUpperCase()
+      if (!['SI', 'NO', 'S', 'N', 'LIDER', 'COMUN', 'TRUE', 'FALSE', '1', '0'].includes(valLider)) {
+        errs.push(`Es_Lider inválido: "${row.Es_Lider}". Debe ser SI o NO`)
+      }
+    }
   }
   return errs
+}
+
+function detectarAdvertencia(row) {
+  if (tipoImportacion.value === 'instructores' && row.Es_Lider && row.Ficha) {
+    const valLider = String(row.Es_Lider).trim().toUpperCase()
+    const esLiderVal = ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(valLider)
+    if (esLiderVal) {
+      const ficha = getFichaPorCodigo(row.Ficha)
+      if (ficha && ficha.instructorLiderId) {
+        const nombreActualLider = getInstructorNombre(ficha.instructorLiderId)
+        return `La Ficha ${row.Ficha} ya tiene asignado como Líder a ${nombreActualLider || 'otro docente'}. Al importar, se actualizará a ${row.Nombres} ${row.Apellidos}.`
+      }
+    }
+  }
+  return null
 }
 
 function procesarArchivo(event) {
@@ -80,48 +158,112 @@ function procesarArchivo(event) {
   archivoNombre.value = file.name
   registros.value = []
   errores.value = []
+  advertencias.value = []
   importado.value = false
+
   const reader = new FileReader()
   reader.onload = (e) => {
     const texto = e.target.result
     const { headers, rows } = parsearCSV(texto)
-    if (headers.length === 0 || rows.length === 0) { showToastFn('El archivo esta vacio o no se pudo leer', 'error'); return }
-    if (!validarHeaders(headers)) { showToastFn('El archivo no contiene las cabeceras requeridas: ' + HEADERS_ESPERADOS.join(', '), 'error'); return }
+    if (headers.length === 0 || rows.length === 0) {
+      showToastFn('El archivo está vacío o no se pudo leer', 'error')
+      return
+    }
+    if (!validarHeaders(headers)) {
+      showToastFn('El archivo no contiene las cabeceras requeridas: ' + headersEsperados.value.join(', '), 'error')
+      return
+    }
+
     const tempRegistros = []
     const tempErrores = []
-    rows.forEach((row, idx) => {
-      const errs = validarFila(row, idx)
-      if (errs.length > 0) tempErrores.push({ linea: row._linea, datos: row, errores: errs })
-      else tempRegistros.push(row)
+    const tempAdvertencias = []
+
+    rows.forEach((row) => {
+      const errs = validarFila(row)
+      if (errs.length > 0) {
+        tempErrores.push({ linea: row._linea, datos: row, errores: errs })
+      } else {
+        const adv = detectarAdvertencia(row)
+        if (adv) {
+          row._advertencia = adv
+          tempAdvertencias.push({ linea: row._linea, docente: `${row.Nombres} ${row.Apellidos}`, ficha: row.Ficha, mensaje: adv })
+        }
+        tempRegistros.push(row)
+      }
     })
+
     registros.value = tempRegistros
     errores.value = tempErrores
+    advertencias.value = tempAdvertencias
   }
   reader.readAsText(file, 'UTF-8')
 }
 
 async function ejecutarImportacion() {
-  if (registros.value.length === 0) { showToastFn('No hay registros validos para importar', 'error'); return }
-  const esEstudiantes = tipoImportacion.value === 'estudiantes'
+  if (registros.value.length === 0) {
+    showToastFn('No hay registros válidos para importar', 'error')
+    return
+  }
+
   loading.value = true
   try {
-    const items = registros.value.map(r => {
-      const ficha = getFichaPorCodigo(r.Ficha)
-      return {
-        nombres: r.Nombres, apellidos: r.Apellidos,
-        tipoDocumento: r.Tipo_Doc.toUpperCase(), numeroDocumento: r.Num_Doc,
-        correo: r.Correo, telefono: r.Telefono,
-        fichaId: ficha ? ficha._id : null,
-        genero: r.Genero, estado: 'Activo', motivo: '', estadoAsistencia: 'Sin registro',
-        ...(esEstudiantes ? {} : { especialidad: r.Ficha }),
-      }
-    })
-
-    await api.estudiantes.importar(items)
+    if (tipoImportacion.value === 'fichas') {
+      const items = registros.value.map(r => ({
+        codigoFicha: r.Codigo_Ficha,
+        nombrePrograma: r.Nombre_Programa,
+        jornada: r.Jornada || 'Diurna',
+        aulaAsignada: r.Aula_Asignada || 'Aula General',
+        fechaInicio: r.Fecha_Inicio || '2026-02-01',
+        fechaFin: r.Fecha_Fin || '2026-11-30',
+      }))
+      await api.fichas.importar(items)
+      fichasList.value = await api.fichas.getAll()
+      showToastFn(`${registros.value.length} fichas importadas correctamente`)
+    } else if (tipoImportacion.value === 'instructores') {
+      const items = registros.value.map(r => {
+        const ficha = getFichaPorCodigo(r.Ficha)
+        const valLider = String(r.Es_Lider || '').trim().toUpperCase()
+        const esLiderVal = ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(valLider)
+        return {
+          nombres: r.Nombres,
+          apellidos: r.Apellidos,
+          tipoDocumento: r.Tipo_Doc.toUpperCase(),
+          numeroDocumento: r.Num_Doc,
+          correo: r.Correo,
+          telefono: r.Telefono,
+          especialidad: ficha ? ficha.nombrePrograma : 'Docente SENA',
+          fichaId: ficha ? ficha._id : null,
+          esLider: esLiderVal,
+          password: 'sena2026',
+          rol: 'Instructor',
+          estado: 'Activo',
+        }
+      })
+      await api.instructores.importar(items)
+      showToastFn(`${registros.value.length} docentes / instructores importados correctamente`)
+    } else {
+      const items = registros.value.map(r => {
+        const ficha = getFichaPorCodigo(r.Ficha)
+        return {
+          nombres: r.Nombres,
+          apellidos: r.Apellidos,
+          tipoDocumento: r.Tipo_Doc.toUpperCase(),
+          numeroDocumento: r.Num_Doc,
+          correo: r.Correo,
+          telefono: r.Telefono,
+          fichaId: ficha ? ficha._id : null,
+          genero: r.Genero,
+          estado: 'Activo',
+          motivo: '',
+          estadoAsistencia: 'Sin registro',
+        }
+      })
+      await api.estudiantes.importar(items)
+      showToastFn(`${registros.value.length} estudiantes importados correctamente`)
+    }
     importado.value = true
-    showToastFn(`${registros.value.length} estudiantes importados correctamente`)
   } catch (e) {
-    showToastFn('Error: ' + e.message, 'error')
+    showToastFn('Error al importar: ' + e.message, 'error')
   } finally {
     loading.value = false
   }
@@ -131,6 +273,7 @@ function limpiarTodo() {
   archivoNombre.value = ''
   registros.value = []
   errores.value = []
+  advertencias.value = []
   importado.value = false
   const input = document.getElementById('archivo-input')
   if (input) input.value = ''
@@ -139,74 +282,247 @@ function limpiarTodo() {
 
 <template>
   <div class="page-header">
-    <h1>Importar Usuarios</h1>
-    <p>Importa docentes o estudiantes mediante archivo CSV con log de errores</p>
+    <h1>Carga Masiva de Archivos Planos</h1>
+    <p>Importación masiva mediante archivos CSV</p>
   </div>
 
-  <div class="card">
-    <div class="card-header"><h3>Configuracion de Importacion</h3></div>
-    <div class="form-grid">
-      <div class="form-group"><label>Tipo de Usuario</label><select v-model="tipoImportacion" :disabled="archivoNombre !== ''"><option value="estudiantes">Estudiantes</option><option value="instructores">Instructores / Docentes</option></select></div>
-      <div class="form-group">
-        <label>Archivo CSV</label>
-        <div class="file-upload-wrapper">
-          <input id="archivo-input" type="file" accept=".csv" @change="procesarArchivo" class="file-input" />
-          <label for="archivo-input" class="file-label">{{ archivoNombre || 'Seleccionar archivo .csv' }}</label>
+  <!-- SI NO TIENE PERMISO (SI ES DOCENTE COMÚN) -->
+  <div v-if="!permisoCarga" class="card" style="border: 1.5px solid #fecdd3; background: #fff1f2;">
+    <div style="color: #9f1239; font-size: 15px;">
+      🔒 <strong>Acceso Restringido:</strong> La carga masiva mediante archivos planos (CSV) está reservada para el <strong>Administrador</strong> o <strong>Instructores Líderes de Ficha</strong>.
+    </div>
+  </div>
+
+  <!-- CONFIGURACIÓN DE IMPORTACIÓN SI TIENE PERMISO -->
+  <template v-else>
+    <div class="card">
+      <div class="card-header">
+        <h3>Configuración de Importación</h3>
+        <span v-if="usuario.rol === 'Instructor'" class="badge badge-success">
+          👑 Docente Líder Autorizado
+        </span>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Tipo de Datos a Importar</label>
+          <select v-model="tipoImportacion" :disabled="archivoNombre !== ''" @change="limpiarTodo">
+            <option value="estudiantes">👨‍🎓 Estudiantes (Aprendices)</option>
+            <option value="instructores">👨‍🏫 Instructores / Docentes</option>
+            <option value="fichas" v-if="usuario.rol === 'Administrador'">📋 Fichas / Programas</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Archivo CSV</label>
+          <div class="file-upload-wrapper">
+            <input id="archivo-input" type="file" accept=".csv" @change="procesarArchivo" class="file-input" />
+            <label for="archivo-input" class="file-label">{{ archivoNombre || 'Seleccionar archivo .csv' }}</label>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="import-info">
-      <h4>Formato requerido del archivo CSV:</h4>
-      <p>Cabeceras obligatorias (separadas por coma o punto y coma):</p>
-      <code>Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Jornada</code>
-      <ul>
-        <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
-        <li><strong>Ficha:</strong> Codigo de ficha existente en el sistema</li>
-        <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
-        <li>Todos los campos son obligatorios</li>
-      </ul>
-    </div>
-  </div>
 
-  <div v-if="errores.length > 0" class="card">
-    <div class="card-header"><h3>Errores de Validacion</h3><span class="badge badge-danger">{{ errores.length }} errores</span></div>
-    <div class="table-container">
-      <table>
-        <thead><tr><th>Linea</th><th>Datos</th><th>Errores</th></tr></thead>
-        <tbody>
-          <tr v-for="(err, idx) in errores" :key="idx" class="fila-error">
-            <td>{{ err.linea }}</td>
-            <td style="font-size: 12px;">{{ err.datos.Nombres }} {{ err.datos.Apellidos }} ({{ err.datos.Num_Doc }})</td>
-            <td><ul style="margin: 0; padding-left: 16px; font-size: 12px; color: #dc2626;"><li v-for="(e, i) in err.errores" :key="i">{{ e }}</li></ul></td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="import-info">
+        <h4>Formato requerido del archivo CSV ({{ tipoImportacion.toUpperCase() }}):</h4>
+        <p>Cabeceras obligatorias requeridas:</p>
+        <code>{{ headersEsperados.join(',') }}</code>
+        
+        <ul v-if="tipoImportacion === 'instructores'" style="margin-top: 10px;">
+          <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
+          <li><strong>Ficha:</strong> Código de la ficha asignada al docente (ej. 2670123)</li>
+          <li><strong>Es_Lider:</strong> Pon <code>SI</code> si el docente es el Líder de la ficha, o <code>NO</code> si es Docente Común</li>
+          <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
+        </ul>
+        <ul v-else-if="tipoImportacion === 'fichas'" style="margin-top: 10px;">
+          <li><strong>Codigo_Ficha:</strong> Número identificador único de la ficha (ej. 2901122)</li>
+          <li><strong>Nombre_Programa:</strong> Nombre del programa (ej. Análisis y Desarrollo de Software)</li>
+          <li><strong>Jornada:</strong> Mañana, Tarde o Noche</li>
+          <li><strong>Fecha_Inicio / Fecha_Fin:</strong> Formato YYYY-MM-DD (ej. 2026-02-01)</li>
+        </ul>
+        <ul v-else style="margin-top: 10px;">
+          <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
+          <li><strong>Ficha:</strong> Código de ficha existente en el sistema</li>
+          <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
+        </ul>
+      </div>
     </div>
-  </div>
 
-  <div v-if="registros.length > 0 && !importado" class="card">
-    <div class="card-header"><h3>Registros Validos para Importar</h3><span class="badge badge-success">{{ registros.length }} registros</span></div>
-    <div class="table-container">
-      <table>
-        <thead><tr><th>Tipo Doc</th><th>Nro Doc</th><th>Nombres</th><th>Apellidos</th><th>Genero</th><th>Correo</th><th>Telefono</th><th>Ficha</th><th>Jornada</th></tr></thead>
-        <tbody><tr v-for="(r, idx) in registros.slice(0, 50)" :key="idx"><td>{{ r.Tipo_Doc }}</td><td>{{ r.Num_Doc }}</td><td>{{ r.Nombres }}</td><td>{{ r.Apellidos }}</td><td>{{ r.Genero }}</td><td>{{ r.Correo }}</td><td>{{ r.Telefono }}</td><td>{{ r.Ficha }}</td><td>{{ r.Jornada }}</td></tr></tbody>
-      </table>
-      <p v-if="registros.length > 50" style="text-align: center; padding: 12px; color: var(--text-secondary); font-size: 13px;">Mostrando 50 de {{ registros.length }} registros</p>
+    <!-- ERRORES BLOQUEANTES -->
+    <div v-if="errores.length > 0" class="card">
+      <div class="card-header">
+        <h3>Errores de Validación (Bloqueantes)</h3>
+        <span class="badge badge-danger">{{ errores.length }} errores</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Línea</th>
+              <th>Datos</th>
+              <th>Errores</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(err, idx) in errores" :key="idx" class="fila-error">
+              <td>{{ err.linea }}</td>
+              <td style="font-size: 12px;">
+                {{ err.datos.Codigo_Ficha || err.datos.Nombres || 'Fila ' + err.linea }} 
+                {{ err.datos.Nombre_Programa || err.datos.Apellidos || '' }}
+              </td>
+              <td>
+                <ul style="margin: 0; padding-left: 16px; font-size: 12px; color: #dc2626;">
+                  <li v-for="(e, i) in err.errores" :key="i">{{ e }}</li>
+                </ul>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div style="margin-top: 16px; display: flex; gap: 12px;">
-      <button class="btn btn-primary" @click="ejecutarImportacion" :disabled="loading">{{ loading ? 'Importando...' : 'Importar ' + registros.length + ' ' + (tipoImportacion === 'estudiantes' ? 'Estudiantes' : 'Instructores') }}</button>
-      <button class="btn btn-outline" @click="limpiarTodo">Cancelar</button>
-    </div>
-  </div>
 
-  <div v-if="importado" class="card">
-    <div class="card-header"><h3>Importacion Completada</h3></div>
-    <div class="import-resumen">
-      <div class="import-stat success"><span class="import-stat-num">{{ registros.length }}</span><span>Importados correctamente</span></div>
-      <div v-if="errores.length > 0" class="import-stat error"><span class="import-stat-num">{{ errores.length }}</span><span>Con errores (omitidos)</span></div>
+    <!-- ADVERTENCIAS INFORMATIVAS DE LIDERAZGO -->
+    <div v-if="advertencias.length > 0" class="card card-warning-box">
+      <div class="card-header">
+        <h3 style="color: #92400e;">⚠️ Advertencias de Liderazgo (Opcionales)</h3>
+        <span class="badge badge-warning">{{ advertencias.length }} avisos</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Línea</th>
+              <th>Docente</th>
+              <th>Ficha</th>
+              <th>Aviso Informativo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(adv, idx) in advertencias" :key="idx" class="fila-warning">
+              <td><strong>{{ adv.linea }}</strong></td>
+              <td>{{ adv.docente }}</td>
+              <td><code>{{ adv.ficha }}</code></td>
+              <td style="color: #854d0e; font-size: 12.5px;">{{ adv.mensaje }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <button class="btn btn-primary" @click="limpiarTodo" style="margin-top: 16px;">Nueva Importacion</button>
-  </div>
+
+    <!-- REGISTROS VÁLIDOS -->
+    <div v-if="registros.length > 0 && !importado" class="card">
+      <div class="card-header">
+        <h3>Registros Válidos para Importar</h3>
+        <span class="badge badge-success">{{ registros.length }} registros</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr v-if="tipoImportacion === 'fichas'">
+              <th>Código Ficha</th><th>Nombre Programa</th><th>Jornada</th><th>Aula</th><th>Fecha Inicio</th><th>Fecha Fin</th>
+            </tr>
+            <tr v-else-if="tipoImportacion === 'instructores'">
+              <th>Tipo Doc</th><th>Nro Doc</th><th>Nombres</th><th>Apellidos</th><th>Correo</th><th>Ficha</th><th>¿Es Líder?</th><th>Avisos</th>
+            </tr>
+            <tr v-else>
+              <th>Tipo Doc</th><th>Nro Doc</th><th>Nombres</th><th>Apellidos</th><th>Género</th><th>Correo</th><th>Teléfono</th><th>Ficha</th><th>Jornada</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, idx) in registros.slice(0, 50)" :key="idx">
+              <template v-if="tipoImportacion === 'fichas'">
+                <td>{{ r.Codigo_Ficha }}</td><td>{{ r.Nombre_Programa }}</td><td>{{ r.Jornada }}</td><td>{{ r.Aula_Asignada }}</td><td>{{ r.Fecha_Inicio }}</td><td>{{ r.Fecha_Fin }}</td>
+              </template>
+              <template v-else-if="tipoImportacion === 'instructores'">
+                <td>{{ r.Tipo_Doc }}</td><td>{{ r.Num_Doc }}</td><td>{{ r.Nombres }}</td><td>{{ r.Apellidos }}</td><td>{{ r.Correo }}</td><td>{{ r.Ficha }}</td>
+                <td>
+                  <span class="badge" :class="['SI', 'S', 'LIDER', 'TRUE', '1'].includes(String(r.Es_Lider).toUpperCase()) ? 'badge-success' : 'badge-neutral'">
+                    {{ ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(String(r.Es_Lider).toUpperCase()) ? '👑 Sí (Líder)' : '👤 No (Común)' }}
+                  </span>
+                </td>
+                <td>
+                  <span v-if="r._advertencia" class="badge badge-warning" :title="r._advertencia">
+                    ⚠️ Reemplazará Líder
+                  </span>
+                  <span v-else class="text-muted" style="font-size: 11px;">—</span>
+                </td>
+              </template>
+              <template v-else>
+                <td>{{ r.Tipo_Doc }}</td><td>{{ r.Num_Doc }}</td><td>{{ r.Nombres }}</td><td>{{ r.Apellidos }}</td><td>{{ r.Genero }}</td><td>{{ r.Correo }}</td><td>{{ r.Telefono }}</td><td>{{ r.Ficha }}</td><td>{{ r.Jornada }}</td>
+              </template>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="registros.length > 50" style="text-align: center; padding: 12px; color: var(--text-secondary); font-size: 13px;">
+          Mostrando 50 de {{ registros.length }} registros
+        </p>
+      </div>
+      <div style="margin-top: 16px; display: flex; gap: 12px;">
+        <button class="btn btn-primary" @click="ejecutarImportacion" :disabled="loading">
+          {{ loading ? 'Importando...' : '📥 Importar ' + registros.length + ' ' + tipoImportacion.toUpperCase() }}
+        </button>
+        <button class="btn btn-outline" @click="limpiarTodo">Cancelar</button>
+      </div>
+    </div>
+
+    <!-- COMPLETADO -->
+    <div v-if="importado" class="card">
+      <div class="card-header">
+        <h3>Importación Completada Exitosamente</h3>
+      </div>
+      <div class="import-resumen">
+        <div class="import-stat success">
+          <span class="import-stat-num">{{ registros.length }}</span>
+          <span>Importados correctamente</span>
+        </div>
+        <div v-if="errores.length > 0" class="import-stat error">
+          <span class="import-stat-num">{{ errores.length }}</span>
+          <span>Con errores (omitidos)</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" @click="limpiarTodo" style="margin-top: 16px;">Nueva Importación</button>
+    </div>
+  </template>
 
   <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
 </template>
+
+<style scoped>
+.page-header { margin-bottom: 24px; }
+.page-header h1 { font-size: 24px; font-weight: 700; color: #1e293b; }
+.page-header p { color: #64748b; font-size: 14px; }
+.card { background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+.card-warning-box { border: 1.5px solid #fef08a; background: #fffbe6; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.card-header h3 { font-size: 16px; font-weight: 700; color: #1e293b; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 13px; font-weight: 600; color: #475569; }
+.form-group select { padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: #fff; }
+.file-upload-wrapper { position: relative; }
+.file-input { display: none; }
+.file-label { display: block; padding: 9px 16px; border: 2px dashed #cbd5e1; border-radius: 8px; text-align: center; color: #64748b; font-size: 14px; cursor: pointer; background: #f8fafc; transition: all 0.2s; }
+.file-label:hover { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
+.import-info { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; font-size: 13px; color: #475569; }
+.import-info h4 { font-size: 14px; margin-bottom: 8px; color: #1e293b; }
+.import-info code { display: block; background: #1e293b; color: #38bdf8; padding: 8px 12px; border-radius: 6px; font-family: monospace; margin: 8px 0; font-size: 13px; overflow-x: auto; }
+.badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.badge-danger { background: #fee2e2; color: #991b1b; }
+.badge-success { background: #dcfce7; color: #15803d; }
+.badge-warning { background: #fef3c7; color: #92400e; }
+.badge-neutral { background: #f1f5f9; color: #64748b; }
+.table-container { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+th { background: #f8fafc; font-weight: 600; color: #475569; }
+.fila-error { background: #fff5f5; }
+.fila-warning { background: #fefce8; }
+.btn { padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; border: none; cursor: pointer; }
+.btn-primary { background: #2563eb; color: white; }
+.btn-outline { background: white; border: 1px solid #cbd5e1; color: #475569; }
+.import-resumen { display: flex; gap: 16px; margin-top: 16px; }
+.import-stat { display: flex; flex-direction: column; align-items: center; padding: 16px 24px; border-radius: 12px; flex: 1; }
+.import-stat.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+.import-stat.error { background: #fef2f2; border: 1px solid #fecdd3; color: #991b1b; }
+.import-stat-num { font-size: 28px; font-weight: 700; }
+.toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; font-weight: 600; color: white; z-index: 9999; }
+.toast-success { background: #16a34a; }
+.toast-error { background: #dc2626; }
+</style>

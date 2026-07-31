@@ -149,10 +149,6 @@ async function radicarExcusa() {
             </strong>
           </div>
         </div>
-
-        <button class="btn btn-primary btn-block" style="margin-top: 20px;" @click="showNuevaExcusaModal = true">
-          📝 Radicar Excusa Médica / Justificante
-        </button>
       </div>
 
       <!-- Métricas y Registros -->
@@ -204,57 +200,6 @@ async function radicarExcusa() {
           </div>
         </div>
 
-        <!-- Tabla Excusas Radicadas -->
-        <div class="card" style="margin-top: 24px;">
-          <div class="card-header">
-            <h3>Mis Excusas Radicadas</h3>
-          </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Fecha Inasistencia</th>
-                  <th>Motivo / Justificación</th>
-                  <th>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="exc in excusas" :key="exc._id">
-                  <td>{{ exc.fechaInasistencia }}</td>
-                  <td>{{ exc.motivo }}</td>
-                  <td>
-                    <span class="badge" :class="exc.estado === 'Aprobada' ? 'badge-success' : (exc.estado === 'Rechazada' ? 'badge-danger' : 'badge-warning')">
-                      {{ exc.estado }}
-                    </span>
-                  </td>
-                </tr>
-                <tr v-if="excusas.length === 0">
-                  <td colspan="3" class="empty-state">No has radicado excusas.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- Modal para Radicar Excusa -->
-    <div v-if="showNuevaExcusaModal" class="modal-overlay" @click.self="showNuevaExcusaModal = false">
-      <div class="modal" style="max-width: 480px;">
-        <h2>📝 Radicar Excusa Médica o Justificante</h2>
-        <div class="form-group" style="margin-top: 16px;">
-          <label>Fecha de Inasistencia</label>
-          <input v-model="nuevaExcusa.fechaInasistencia" type="date" />
-        </div>
-        <div class="form-group" style="margin-top: 16px;">
-          <label>Motivo o Justificación</label>
-          <textarea v-model="nuevaExcusa.motivo" rows="4" placeholder="Describe la razón de la inasistencia (incapacidad médica, cita médica, motivo de fuerza mayor...)" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1;"></textarea>
-        </div>
-        <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
-          <button class="btn btn-outline" @click="showNuevaExcusaModal = false">Cancelar</button>
-          <button class="btn btn-primary" @click="radicarExcusa">Enviar Excusa</button>
-        </div>
       </div>
     </div>
   </div>

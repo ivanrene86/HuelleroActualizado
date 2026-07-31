@@ -1,0 +1,5 @@
+Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Jornada
+CC,1099887701,Andrés,Gómez,Masculino,andres.gomez@misena.edu.co,3101234567,2670123,Diurna
+CC,1099887702,Mariana,López,Femenino,mariana.lopez@misena.edu.co,3112345678,2670123,Diurna
+CC,1099887703,Santiago,Martínez,Masculino,santiago.martinez@misena.edu.co,3123456789,2891234,Nocturna
+CC,1099887704,Camila,Hernández,Femenino,camila.hernandez@misena.edu.co,3134567890,2891234,Nocturna

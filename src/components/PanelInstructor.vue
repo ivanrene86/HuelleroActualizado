@@ -463,13 +463,6 @@ function descargarExcel(data, nombreArchivo) {
             >
               ✏️ Historial
             </button>
-            <button
-              class="tab-btn"
-              :class="{ active: vistaFicha === 'excusas' }"
-              @click="vistaFicha = 'excusas'"
-            >
-              📝 Excusas ({{ excusasFicha.length }})
-            </button>
             <!-- BOTÓN GESTIONAR ESTUDIANTES: Exclusivo para Docente Líder -->
             <button
               class="tab-btn"
@@ -636,46 +629,6 @@ function descargarExcel(data, nombreArchivo) {
               </tr>
               <tr v-if="asistenciasFicha.length === 0">
                 <td colspan="3" class="empty-cell">No hay registros de asistencias pasadas.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- ========================================= -->
-        <!-- VISTA 3: GESTIONAR EXCUSAS                -->
-        <!-- ========================================= -->
-        <div v-if="vistaFicha === 'excusas'" class="section-body">
-          <h4>Gestión y Aprobación de Excusas</h4>
-          <p class="section-desc">Revisa y responde las excusas radicadas por los aprendices:</p>
-
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Aprendiz</th>
-                <th>Fecha Inasistencia</th>
-                <th>Motivo / Justificación</th>
-                <th>Estado</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="exc in excusasFicha" :key="exc._id">
-                <td><strong>{{ exc.estudianteId?.nombres }} {{ exc.estudianteId?.apellidos }}</strong></td>
-                <td>{{ exc.fechaInasistencia }}</td>
-                <td>{{ exc.motivo }}</td>
-                <td>
-                  <span class="status-pill" :class="'status-' + (exc.estado || '').toLowerCase()">{{ exc.estado }}</span>
-                </td>
-                <td>
-                  <div v-if="exc.estado === 'Pendiente'" class="action-buttons">
-                    <button class="btn-sm btn-success" @click="aprobarExcusa(exc._id)">Aprobar</button>
-                    <button class="btn-sm btn-danger" @click="abrirRechazo(exc._id)">Rechazar</button>
-                  </div>
-                  <span v-else class="text-muted">Procesada</span>
-                </td>
-              </tr>
-              <tr v-if="excusasFicha.length === 0">
-                <td colspan="5" class="empty-cell">No hay excusas registradas para esta ficha.</td>
               </tr>
             </tbody>
           </table>
@@ -958,13 +911,18 @@ function descargarExcel(data, nombreArchivo) {
   position: fixed;
   top: 24px;
   right: 24px;
-  padding: 14px 24px;
-  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 12px;
   font-size: 14px;
   font-weight: 600;
-  z-index: 9999;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-  max-width: 400px;
+  z-index: 99999;
+  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
+  max-width: 420px;
+  width: calc(100vw - 48px);
+  word-break: break-word;
 }
 .toast-success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
 .toast-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }

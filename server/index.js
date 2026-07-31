@@ -8,7 +8,6 @@ import authRoutes from './routes/auth.js'
 import instructoresRoutes from './routes/instructores.js'
 import fichasRoutes from './routes/fichas.js'
 import estudiantesRoutes from './routes/estudiantes.js'
-import excusasRoutes from './routes/excusas.js'
 import asistenciasRoutes from './routes/asistencias.js'
 import diasFestivosRoutes from './routes/diasFestivos.js'
 
@@ -81,6 +80,5 @@ app.use('/api/auth', authRoutes)
 app.use('/api/instructores', instructoresRoutes)
 app.use('/api/fichas', fichasRoutes)
 app.use('/api/estudiantes', estudiantesRoutes)
-app.use('/api/excusas', excusasRoutes)
 app.use('/api/asistencias', asistenciasRoutes)
 app.use('/api/dias-festivos', diasFestivosRoutes)

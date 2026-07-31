@@ -240,7 +240,7 @@ function retiradosCount() { return estudiantes.value.filter(e => e.estado === 'R
           <option v-for="f in fichasList" :key="f._id" :value="f._id">{{ f.codigoFicha }} - {{ f.nombrePrograma }}</option>
         </select>
       </div>
-      <div class="form-group"><label>Jornada</label><select v-model="busqueda.jornada"><option value="">Todas</option><option value="Diurna">Diurna</option><option value="Nocturna">Nocturna</option><option value="Mixta">Mixta</option></select></div>
+      <div class="form-group"><label>Jornada</label><select v-model="busqueda.jornada"><option value="">Todas las jornadas</option><option value="Mañana">🌅 Mañana</option><option value="Tarde">☀️ Tarde</option><option value="Noche">🌙 Noche</option></select></div>
       <div class="form-group"><label>Numero de Documento</label><input v-model="busqueda.documento" type="text" placeholder="Buscar por documento..." /></div>
       <div class="form-group"><label>Nombres</label><input v-model="busqueda.nombres" type="text" placeholder="Buscar por nombre..." /></div>
       <div class="form-group"><label>Estado de Asistencia</label><select v-model="busqueda.estadoAsistencia"><option value="">Todos</option><option value="Sin registro">Sin registro</option><option value="Presente">Presente</option><option value="Ausente">Ausente</option></select></div>
