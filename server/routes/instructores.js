@@ -15,7 +15,14 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const instructor = new Instructor(req.body)
+    const data = {
+      password: 'sena2026',
+      rol: 'Instructor',
+      ...req.body
+    }
+    if (!data.password) data.password = 'sena2026'
+
+    const instructor = new Instructor(data)
     await instructor.save()
     res.status(201).json(instructor)
   } catch (err) {
@@ -53,6 +60,9 @@ router.post('/importar', async (req, res) => {
     let creados = 0
     for (const instData of instructores) {
       const { fichaId, esLider, ...rest } = instData
+      if (!rest.password) rest.password = 'sena2026'
+      if (!rest.rol) rest.rol = 'Instructor'
+
       const instructor = new Instructor(rest)
       await instructor.save()
       creados++

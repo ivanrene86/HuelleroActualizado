@@ -43,6 +43,19 @@ router.get('/mis-fichas/:instructorId', async (req, res) => {
   }
 })
 
+router.get('/:id/plantillas-biometricas', async (req, res) => {
+  try {
+    const estudiantes = await Estudiante.find({
+      fichaId: req.params.id,
+      huellaEnrolada: true
+    }).select('_id nombres apellidos numeroDocumento huellaTemplate')
+
+    res.json(estudiantes)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.post('/', async (req, res) => {
   try {
     const ficha = new Ficha(req.body)
