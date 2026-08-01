@@ -6,8 +6,8 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const fichas = await Ficha.find()
-      .populate('instructorLiderId', 'nombres apellidos correo')
-      .populate('instructores', 'nombres apellidos correo')
+      .populate('instructorLiderId', 'nombres apellidos correo especialidad telefono')
+      .populate('instructores', 'nombres apellidos correo especialidad telefono')
       .sort({ createdAt: -1 })
     res.json(fichas)
   } catch (err) {
@@ -24,8 +24,8 @@ router.get('/mis-fichas/:instructorId', async (req, res) => {
         { instructores: instructorId }
       ]
     })
-      .populate('instructorLiderId', 'nombres apellidos correo')
-      .populate('instructores', 'nombres apellidos correo')
+      .populate('instructorLiderId', 'nombres apellidos correo especialidad telefono')
+      .populate('instructores', 'nombres apellidos correo especialidad telefono')
       .sort({ createdAt: -1 })
 
     const resultado = fichas.map(f => {
