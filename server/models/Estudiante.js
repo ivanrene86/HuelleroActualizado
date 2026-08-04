@@ -4,7 +4,7 @@ const estudianteSchema = new mongoose.Schema({
   nombres: { type: String, required: true },
   apellidos: { type: String, required: true },
   tipoDocumento: { type: String, enum: ['CC', 'CE', 'PEP'], default: 'CC' },
-  numeroDocumento: { type: String, required: true, unique: true },
+  numeroDocumento: { type: String, required: true },
   correo: { type: String, required: true },
   telefono: { type: String, required: true },
   fichaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ficha', default: null },
@@ -15,6 +15,7 @@ const estudianteSchema = new mongoose.Schema({
   huellaEnrolada: { type: Boolean, default: false },
   huellaTemplate: { type: String, default: '' },
   fechaEnrolamiento: { type: String, default: '' },
+  dedoEnrolado: { type: String, default: '' },
 }, { timestamps: true, collection: 'estudiantes' })
 
 export default mongoose.model('Estudiante', estudianteSchema)
