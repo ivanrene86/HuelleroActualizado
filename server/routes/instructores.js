@@ -7,7 +7,19 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const instructores = await Instructor.find().sort({ createdAt: -1 })
-    res.json(instructores)
+    const fichasLideres = await Ficha.find({ instructorLiderId: { $ne: null } })
+    const idsLideres = new Set(fichasLideres.map(f => String(f.instructorLiderId)))
+
+    const resultado = instructores.map(inst => {
+      const obj = inst.toObject()
+      const esLiderEnFicha = idsLideres.has(String(inst._id))
+      return {
+        ...obj,
+        esLider: !!(inst.esLider || esLiderEnFicha)
+      }
+    })
+
+    res.json(resultado)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

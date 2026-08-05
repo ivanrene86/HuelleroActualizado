@@ -157,6 +157,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
             <th>Correo</th>
             <th>Telefono</th>
             <th>Especialidad</th>
+            <th>Tipo Docente</th>
             <th>Estado</th>
             <th>Acciones</th>
           </tr>
@@ -168,6 +169,11 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
             <td>{{ i.correo }}</td>
             <td>{{ i.telefono }}</td>
             <td><span class="badge badge-success">{{ i.especialidad }}</span></td>
+            <td>
+              <span class="badge" :class="i.esLider ? 'badge-primary' : 'badge-neutral'" style="font-size: 12px; font-weight: 600;">
+                {{ i.esLider ? '👥 Instructor Líder' : '👨‍🏫 Instructor Común' }}
+              </span>
+            </td>
             <td>
               <span class="badge" :class="i.estado === 'Activo' ? 'badge-success' : 'badge-danger'">{{ i.estado }}</span>
               <div v-if="i.estado === 'Inactivo' && i.motivo" class="motivo-texto">{{ i.motivo }}</div>
@@ -222,6 +228,9 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
         <div class="form-group"><label>Correo Electronico</label><input v-model="instructorForm.correo" type="email" placeholder="correo@ejemplo.com" /></div>
         <div class="form-group"><label>Telefono</label><input v-model="instructorForm.telefono" type="tel" placeholder="+57 300 000 0000" /></div>
         <div class="form-group"><label>Especialidad</label><input v-model="instructorForm.especialidad" type="text" placeholder="Ej: Desarrollo de Software" /></div>
+      </div>
+      <div v-if="!editingId" style="margin-top: 16px; padding: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12.5px; color: #1e40af;">
+        🔑 <strong>Cuenta de Acceso Automática:</strong> Se creará una cuenta para iniciar sesión. Su usuario será <strong>{{ instructorForm.correo || 'el correo ingresado' }}</strong> y su contraseña estándar inicial será <strong>sena2026</strong> (el docente podrá cambiarla desde su Perfil).
       </div>
       <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
         <button class="btn btn-outline" @click="closeModal">Cancelar</button>

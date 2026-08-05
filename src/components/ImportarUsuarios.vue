@@ -27,10 +27,19 @@ const headersEsperados = computed(() => {
 })
 
 const fichasList = ref([])
+const estudiantesExistentes = ref([])
+const instructoresExistentes = ref([])
 
 onMounted(async () => {
   try {
-    fichasList.value = await api.fichas.getAll()
+    const [fRes, eRes, iRes] = await Promise.all([
+      api.fichas.getAll(),
+      api.estudiantes.getAll(),
+      api.instructores.getAll()
+    ])
+    fichasList.value = fRes
+    estudiantesExistentes.value = eRes
+    instructoresExistentes.value = iRes
   } catch (e) {}
 
   if (usuario.value.rol === 'Instructor') {
@@ -178,8 +187,52 @@ function procesarArchivo(event) {
     const tempErrores = []
     const tempAdvertencias = []
 
+    const documentosEnArchivo = new Map()
+
     rows.forEach((row) => {
       const errs = validarFila(row)
+
+      // VERIFICACIÓN ANTI-DUPLICADOS DE DOCUMENTO/CÓDIGO
+      if (tipoImportacion.value !== 'fichas') {
+        const docNum = String(row.Num_Doc || '').trim()
+        if (docNum) {
+          // 1. Duplicado dentro del mismo archivo CSV
+          if (documentosEnArchivo.has(docNum)) {
+            errs.push(`Documento duplicado en el archivo: El número "${docNum}" ya aparece previamente en la línea ${documentosEnArchivo.get(docNum)}`)
+          } else {
+            documentosEnArchivo.set(docNum, row._linea)
+          }
+
+          // 2. Duplicado contra la Base de Datos
+          if (tipoImportacion.value === 'estudiantes') {
+            const existeEnBD = estudiantesExistentes.value.find(e => String(e.numeroDocumento).trim() === docNum)
+            if (existeEnBD) {
+              errs.push(`Documento ya registrado en la base de datos: El número "${docNum}" ya pertenece al aprendiz ${existeEnBD.nombres} ${existeEnBD.apellidos}`)
+            }
+          } else if (tipoImportacion.value === 'instructores') {
+            const existeEnBD = instructoresExistentes.value.find(i => String(i.numeroDocumento).trim() === docNum)
+            if (existeEnBD) {
+              errs.push(`Documento ya registrado en la base de datos: El número "${docNum}" ya pertenece al docente ${existeEnBD.nombres} ${existeEnBD.apellidos}`)
+            }
+          }
+        }
+      } else {
+        // Para Fichas: Validar duplicado por Código de Ficha
+        const codFicha = String(row.Codigo_Ficha || '').trim()
+        if (codFicha) {
+          if (documentosEnArchivo.has(codFicha)) {
+            errs.push(`Código de Ficha duplicado en el archivo: La ficha "${codFicha}" ya aparece previamente en la línea ${documentosEnArchivo.get(codFicha)}`)
+          } else {
+            documentosEnArchivo.set(codFicha, row._linea)
+          }
+
+          const existeEnBD = fichasList.value.find(f => String(f.codigoFicha).trim() === codFicha)
+          if (existeEnBD) {
+            errs.push(`Código de Ficha ya registrado en la base de datos: La ficha "${codFicha}" (${existeEnBD.nombrePrograma}) ya existe`)
+          }
+        }
+      }
+
       if (errs.length > 0) {
         tempErrores.push({ linea: row._linea, datos: row, errores: errs })
       } else {
@@ -269,6 +322,40 @@ async function ejecutarImportacion() {
   }
 }
 
+function descargarPlantilla() {
+  let contenido = ''
+  let nombreArchivo = ''
+
+  if (tipoImportacion.value === 'fichas') {
+    nombreArchivo = 'carga_masiva_fichas.csv'
+    contenido = `Codigo_Ficha,Nombre_Programa,Jornada,Aula_Asignada,Fecha_Inicio,Fecha_Fin
+2670123,Análisis y Desarrollo de Software (ADSO),Mañana,Aula 302 Bloque A,2026-02-01,2026-11-30
+2891234,Gestión de Redes de Datos,Tarde,Laboratorio 105 Bloque B,2026-02-01,2026-11-30
+2901122,Diseño Gráfico Digital,Noche,Taller de Diseño Bloque C,2026-02-15,2026-12-15`
+  } else if (tipoImportacion.value === 'instructores') {
+    nombreArchivo = 'carga_masiva_instructores.csv'
+    contenido = `Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Es_Lider,Jornada
+CC,1055443301,Carlos Alberto,Mendoza Pérez,Masculino,carlos.mendoza@sena.edu.co,3104567890,2670123,SI,Mañana
+CC,1055443302,Patricia Elena,Jaramillo Morales,Femenino,patricia.jaramillo@sena.edu.co,3156789012,2891234,SI,Tarde
+CC,1055443303,Roberto Antonio,Gómez Restrepo,Masculino,roberto.gomez@sena.edu.co,3123456789,2901122,SI,Noche
+CC,1055443304,María Fernanda,Suárez Castro,Femenino,maria.suarez@sena.edu.co,3189012345,2670123,NO,Mañana`
+  } else {
+    nombreArchivo = 'carga_masiva_estudiantes.csv'
+    contenido = `Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Jornada
+CC,1098765432,Alejandro,Morales Ríos,Masculino,alejandro.morales@misena.edu.co,3112345678,2670123,Mañana
+CC,1098765433,Valentina,Ospina Gutiérrez,Femenino,valentina.ospina@misena.edu.co,3123456789,2670123,Mañana
+CC,1098765434,Santiago,Cardona Henao,Masculino,santiago.cardona@misena.edu.co,3134567890,2670123,Mañana`
+  }
+
+  const blob = new Blob([contenido], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.setAttribute('download', nombreArchivo)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
 function limpiarTodo() {
   archivoNombre.value = ''
   registros.value = []
@@ -298,9 +385,14 @@ function limpiarTodo() {
     <div class="card">
       <div class="card-header">
         <h3>Configuración de Importación</h3>
-        <span v-if="usuario.rol === 'Instructor'" class="badge badge-success">
-          👑 Docente Líder Autorizado
-        </span>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <button class="btn btn-outline btn-sm" @click="descargarPlantilla">
+            📄 Descargar Plantilla de Ejemplo (.csv)
+          </button>
+          <span v-if="usuario.rol === 'Instructor'" class="badge badge-success">
+            👑 Docente Líder Autorizado
+          </span>
+        </div>
       </div>
       <div class="form-grid">
         <div class="form-group">

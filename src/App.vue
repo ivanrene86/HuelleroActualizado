@@ -69,25 +69,45 @@ const headerSubtitulo = computed(() => {
   return 'Administración SENA'
 })
 
+import api from './services/api.js'
+
 const estadoSistema = reactive({
-  estadoWebSocket: 'Conectado',
-  estadoLectorUSB: 'Conectado',
-  colorSemaforo: 'verde',
+  estadoWebSocket: 'Desconectado',
+  estadoLectorUSB: 'Desconectado',
+  colorSemaforo: 'rojo',
 })
 
-function simularEstado() {
-  const modos = [
-    { ws: 'Conectado', usb: 'Conectado', color: 'verde' },
-    { ws: 'Conectado', usb: 'Conectado', color: 'verde' },
-    { ws: 'Conectado', usb: 'Desconectado', color: 'amarillo' },
-    { ws: 'Desconectado', usb: 'Conectado', color: 'amarillo' },
-    { ws: 'Desconectado', usb: 'Desconectado', color: 'rojo' },
-  ]
-  const modo = modos[Math.floor(Math.random() * modos.length)]
-  estadoSistema.estadoWebSocket = modo.ws
-  estadoSistema.estadoLectorUSB = modo.usb
-  estadoSistema.colorSemaforo = modo.color
+let statusInterval = null
+
+async function verificarEstadoRealSistema() {
+  // 1. Verificar Servidor Backend y SDK Nativo
+  try {
+    const res = await api.estudiantes.fingerprint.status()
+    estadoSistema.estadoWebSocket = 'Conectado'
+    estadoSistema.estadoLectorUSB = (typeof Fingerprint !== 'undefined') ? 'Conectado' : 'Desconectado'
+  } catch (err) {
+    estadoSistema.estadoWebSocket = 'Desconectado'
+    estadoSistema.estadoLectorUSB = 'Desconectado'
+  }
+
+  // 2. Evaluar Color del Semáforo General
+  if (estadoSistema.estadoWebSocket === 'Conectado' && estadoSistema.estadoLectorUSB === 'Conectado') {
+    estadoSistema.colorSemaforo = 'verde'
+  } else if (estadoSistema.estadoWebSocket === 'Conectado') {
+    estadoSistema.colorSemaforo = 'amarillo'
+  } else {
+    estadoSistema.colorSemaforo = 'rojo'
+  }
 }
+
+onMounted(() => {
+  verificarEstadoRealSistema()
+  statusInterval = setInterval(verificarEstadoRealSistema, 3000)
+})
+
+onUnmounted(() => {
+  if (statusInterval) clearInterval(statusInterval)
+})
 
 function colorSemaforoClass(color) {
   if (color === 'verde') return 'semaforo-verde'

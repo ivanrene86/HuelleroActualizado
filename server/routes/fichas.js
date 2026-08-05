@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import Ficha from '../models/Ficha.js'
+import Estudiante from '../models/Estudiante.js'
 
 const router = Router()
 

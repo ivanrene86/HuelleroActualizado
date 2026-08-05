@@ -40,6 +40,7 @@ export default {
   fichas: {
     getAll() { return request('/fichas') },
     getMisFichas(instructorId) { return request(`/fichas/mis-fichas/${instructorId}`) },
+    getPlantillasBiometricas(id) { return request(`/fichas/${id}/plantillas-biometricas`) },
     create(body) { return request('/fichas', { method: 'POST', body: JSON.stringify(body) }) },
     update(id, body) { return request(`/fichas/${id}`, { method: 'PUT', body: JSON.stringify(body) }) },
     delete(id) { return request(`/fichas/${id}`, { method: 'DELETE' }) },
@@ -56,6 +57,26 @@ export default {
     enrolarHuella(id, huellaTemplate) { return request(`/estudiantes/${id}/enrolar-huella`, { method: 'PUT', body: JSON.stringify({ huellaTemplate }) }) },
     delete(id) { return request(`/estudiantes/${id}`, { method: 'DELETE' }) },
     importar(estudiantes) { return request('/estudiantes/importar', { method: 'POST', body: JSON.stringify({ estudiantes }) }) },
+    fingerprint: {
+      enrollStart(studentId, name, documento, dedo) {
+        return request('/estudiantes/enroll-start', { method: 'POST', body: JSON.stringify({ studentId, name, documento, dedo }) })
+      },
+      enrollCapture(sessionId, image) {
+        return request('/estudiantes/enroll-capture', { method: 'POST', body: JSON.stringify({ sessionId, image }) })
+      },
+      enrollComplete(sessionId) {
+        return request('/estudiantes/enroll-complete', { method: 'POST', body: JSON.stringify({ sessionId }) })
+      },
+      enrollCancel(sessionId) {
+        return request('/estudiantes/enroll-cancel', { method: 'POST', body: JSON.stringify({ sessionId }) })
+      },
+      verify(image, fichaId) {
+        return request('/estudiantes/verify', { method: 'POST', body: JSON.stringify({ image, fichaId }) })
+      },
+      status() {
+        return request('/estudiantes/fingerprint-status')
+      }
+    }
   },
 
   asistencias: {

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import api from '../services/api.js'
 import * as XLSX from 'xlsx'
 
@@ -34,6 +34,7 @@ function cerrarSesion() {
 
 onMounted(async () => {
   await cargarMisFichas()
+  setTimeout(() => initFingerprintSDK(), 500)
 })
 
 async function cargarMisFichas() {
@@ -61,16 +62,33 @@ async function seleccionarFicha(ficha) {
   await cargarDatosFicha(ficha._id)
 }
 
+// Auto-activar lectura biométrica al entrar en la vista de asistencia
+watch(vistaFicha, (nuevaVista, viejaVista) => {
+  if (nuevaVista === 'asistencia' && lectorConectado.value && fpSdk) {
+    // Activar modo asistencia
+    modoCaptura = 'asistencia'
+    verificandoHuella.value = true
+    ultimaVerificacion.value = null
+    if (!capturing) {
+      setTimeout(() => iniciarCapturaSDK(), 300)
+    }
+  } else if (viejaVista === 'asistencia' && nuevaVista !== 'asistencia') {
+    // Saliendo de asistencia: detener
+    detenerVerificacionHuella()
+  }
+})
+
+const memoriaBiometricaRAM = ref([])
+
 async function cargarDatosFicha(fichaId) {
   try {
-    const [estRes, excRes, asisRes] = await Promise.all([
-      api.estudiantes.getAll({ fichaId }),
-      api.excusas.getAll({ fichaId }),
-      api.asistencias.getAll({ fichaId }),
-    ])
-    estudiantesFicha.value = estRes
-    excusasFicha.value = excRes
-    asistenciasFicha.value = asisRes
+    const estRes = await api.estudiantes.getAll({ fichaId }).catch(e => { console.error('Error est:', e); return [] })
+    const asisRes = await api.asistencias.getAll({ fichaId }).catch(e => { console.error('Error asis:', e); return [] })
+    const bioRes = await api.fichas.getPlantillasBiometricas(fichaId).catch(e => { console.error('Error bio:', e); return [] })
+
+    estudiantesFicha.value = Array.isArray(estRes) ? estRes : []
+    asistenciasFicha.value = Array.isArray(asisRes) ? asisRes : []
+    memoriaBiometricaRAM.value = Array.isArray(bioRes) ? bioRes : []
     inicializarAsistenciaDia()
   } catch (err) {
     console.error('Error al cargar detalle de ficha:', err)
@@ -88,16 +106,57 @@ function inicializarAsistenciaDia() {
   const hoy = fechaAsistencia.value
   const registros = {}
   for (const est of estudiantesFicha.value) {
-    // Buscar si ya tiene asistencia hoy
     const existente = asistenciasFicha.value.find(
       a => a.estudianteId === est._id && a.fecha === hoy
     )
     registros[est._id] = {
-      estado: existente ? existente.estado : 'Presente',
+      estado: existente ? existente.estado : 'Ninguno',
       excusa: existente ? existente.estado === 'Excusada' : false,
+      horaMarcacion: existente ? (existente.hora || '') : '',
     }
   }
   asistenciaDia.value = registros
+}
+
+function calcularEstadoPorHora(jornada) {
+  const ahora = new Date()
+  const hora = ahora.getHours()
+  const minuto = ahora.getMinutes()
+  const minutosTotales = hora * 60 + minuto
+
+  // Tolerancia de 15 minutos según jornada:
+  // Mañana: 7:00 AM (420 min) -> Tolerancia hasta 7:15 AM (435 min)
+  // Tarde: 1:00 PM (13:00 = 780 min) -> Tolerancia hasta 1:15 PM (795 min)
+  // Noche: 6:00 PM (18:00 = 1080 min) -> Tolerancia hasta 6:15 PM (1095 min)
+
+  let limiteTolerancia = 435 // 7:15 AM por defecto
+  if (jornada === 'Tarde') {
+    limiteTolerancia = 795 // 1:15 PM
+  } else if (jornada === 'Noche') {
+    limiteTolerancia = 1095 // 6:15 PM
+  }
+
+  return minutosTotales > limiteTolerancia ? 'Tardanza' : 'Presente'
+}
+
+function marcarPresente(estId) {
+  const reg = asistenciaDia.value[estId]
+  if (!reg) return
+
+  if (reg.estado === 'Presente' || reg.estado === 'Tardanza') {
+    // Desmarcar al hacer clic de nuevo
+    reg.estado = 'Ninguno'
+    reg.horaMarcacion = ''
+  } else {
+    const ahora = new Date()
+    const horaFormateada = ahora.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
+    const estadoCalculado = calcularEstadoPorHora(jornadaFicha)
+
+    reg.estado = estadoCalculado
+    reg.horaMarcacion = horaFormateada
+    reg.excusa = false
+  }
 }
 
 function toggleExcusa(estId) {
@@ -107,36 +166,41 @@ function toggleExcusa(estId) {
     if (reg.excusa) {
       reg.estado = 'Excusada'
     } else {
-      reg.estado = 'Presente'
+      reg.estado = 'Ninguno'
+      reg.horaMarcacion = ''
     }
-  }
-}
-
-function setEstado(estId, estado) {
-  const reg = asistenciaDia.value[estId]
-  if (reg) {
-    reg.estado = estado
-    reg.excusa = false
   }
 }
 
 async function guardarAsistenciaDia() {
   guardandoAsistencia.value = true
   const hoy = fechaAsistencia.value
-  const hora = new Date().toLocaleTimeString()
+  const horaActual = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   let exitosos = 0
   let errores = 0
 
   for (const est of estudiantesFicha.value) {
     const reg = asistenciaDia.value[est._id]
-    if (!reg) continue
+    let estadoFinal = 'Falta' // Falla automática por defecto para quien no asistió
+    let horaMarcada = horaActual
+
+    if (reg) {
+      if (reg.excusa) {
+        estadoFinal = 'Excusada'
+        horaMarcada = reg.horaMarcacion || horaActual
+      } else if (['Presente', 'Tardanza', 'Excusada'].includes(reg.estado)) {
+        estadoFinal = reg.estado
+        horaMarcada = reg.horaMarcacion || horaActual
+      }
+    }
+
     try {
       await api.asistencias.create({
         estudianteId: est._id,
         fichaId: fichaSeleccionada.value._id,
-        estado: reg.excusa ? 'Excusada' : reg.estado,
+        estado: estadoFinal,
         fecha: hoy,
-        hora,
+        hora: horaMarcada,
       })
       exitosos++
     } catch (err) {
@@ -149,7 +213,7 @@ async function guardarAsistenciaDia() {
   guardandoAsistencia.value = false
 
   if (errores === 0) {
-    showToast(`✅ Asistencia guardada para ${exitosos} aprendices`)
+    showToast(`✅ Jornada finalizada. Asistencias, tardanzas por horario y fallas guardadas.`)
   } else {
     showToast(`⚠️ ${exitosos} guardados, ${errores} con error`, 'warning')
   }
@@ -162,7 +226,13 @@ const conteoAsistencia = computed(() => {
     const reg = asistenciaDia.value[est._id]
     if (reg) {
       const estado = reg.excusa ? 'Excusada' : reg.estado
-      if (conteo[estado] !== undefined) conteo[estado]++
+      if (['Presente', 'Tardanza', 'Excusada'].includes(estado)) {
+        conteo[estado]++
+      } else {
+        conteo.Falta++ // Los no marcados cuentan como Falta automática
+      }
+    } else {
+      conteo.Falta++
     }
   }
   return conteo
@@ -207,6 +277,294 @@ async function confirmarRechazo() {
 }
 
 // =============================================
+// SEMÁFORO DE ESTADO (WS SERVIDORES + LECTORES USB)
+// =============================================
+const wsConectado = ref(false)
+const sdkBackendActivo = ref(false)
+const lectorConectado = ref(false)
+const sdkCargando = ref(true)
+const estadoLector = ref('Verificando Lector USB...')
+
+let fpSdk = null
+let currentReaderUid = ''
+let capturing = false
+let sdkInitIntentos = 0
+let currentFormat = null
+let modoCaptura = 'enrolamiento' // 'enrolamiento' o 'asistencia'
+
+// Estado de verificación biométrica para asistencia
+const verificandoHuella = ref(false)
+const ultimaVerificacion = ref(null)
+
+async function verificarConexionServidor() {
+  try {
+    const res = await api.estudiantes.fingerprint.status()
+    wsConectado.value = true
+    sdkBackendActivo.value = !!(res && res.sdkAvailable)
+  } catch (err) {
+    wsConectado.value = false
+    sdkBackendActivo.value = false
+  }
+}
+
+function verificarEstadoLectorUSB() {
+  if (!fpSdk || capturing || enrolando.value) return // No consultar durante captura o enrolamiento para no interrumpir la transmisión de datos
+
+  fpSdk.enumerateDevices().then(function (readers) {
+    sdkCargando.value = false
+    if (readers && readers.length > 0) {
+      currentReaderUid = readers[0]
+      lectorConectado.value = true
+      estadoLector.value = `Lector USB Conectado (${readers.length} dispositivo detectado)`
+    } else {
+      currentReaderUid = ''
+      lectorConectado.value = false
+      estadoLector.value = 'Sin lector de huellas USB'
+    }
+  }, function (error) {
+    sdkCargando.value = false
+    lectorConectado.value = false
+    currentReaderUid = ''
+    estadoLector.value = 'Servicio local de huellas no responde'
+  })
+}
+
+function initFingerprintSDK() {
+  sdkInitIntentos++
+  console.log('[FP SDK] Intento', sdkInitIntentos, '- verificando Fingerprint global...')
+
+  if (typeof Fingerprint === 'undefined') {
+    console.warn('[FP SDK] Fingerprint global no definido aun.')
+    sdkCargando.value = true
+    estadoLector.value = 'SDK no cargado - scripts faltantes'
+    if (sdkInitIntentos < 10) {
+      setTimeout(initFingerprintSDK, 1000)
+    } else {
+      sdkCargando.value = false
+      lectorConectado.value = false
+      estadoLector.value = 'SDK no disponible tras varios intentos'
+    }
+    return
+  }
+
+  console.log('[FP SDK] Fingerprint global OK, creando WebApi...')
+  try {
+    fpSdk = new Fingerprint.WebApi()
+    console.log('[FP SDK] WebApi creado:', fpSdk)
+  } catch (e) {
+    console.error('[FP SDK] Error al crear WebApi:', e.message)
+    sdkCargando.value = false
+    lectorConectado.value = false
+    estadoLector.value = 'Error al inicializar SDK: ' + e.message
+    return
+  }
+
+  fpSdk.onDeviceConnected = function (e) {
+    console.log('[FP SDK] Dispositivo conectado:', e)
+    if (e && e.deviceUid) currentReaderUid = e.deviceUid
+    lectorConectado.value = true
+    sdkCargando.value = false
+    estadoLector.value = 'Lector conectado - U.are.U 4500'
+  }
+
+  fpSdk.onDeviceDisconnected = function (e) {
+    console.log('[FP SDK] Dispositivo desconectado:', e)
+    lectorConectado.value = false
+    currentReaderUid = ''
+    estadoLector.value = 'Lector desconectado'
+  }
+
+  fpSdk.onCommunicationFailed = function (e) {
+    console.error('[FP SDK] Error de comunicacion:', e)
+    estadoLector.value = 'Error de comunicacion con el lector'
+    lectorConectado.value = false
+    sdkCargando.value = false
+  }
+
+  fpSdk.onSamplesAcquired = function (s) {
+    console.log('[FP SDK] Muestra adquirida, modo:', modoCaptura)
+    detenerCapturaSDK()
+    try {
+      const samples = JSON.parse(s.samples)
+      if (!samples || samples.length === 0) {
+        console.warn('[FP SDK] No hay samples en la respuesta')
+        return
+      }
+      const imgSrc = 'data:image/png;base64,' + Fingerprint.b64UrlTo64(samples[0])
+      console.log('[FP SDK] PNG generado, size:', imgSrc.length)
+      if (modoCaptura === 'asistencia') {
+        procesarVerificacionAsistencia(imgSrc)
+      } else {
+        enviarCapturaAlBackend(imgSrc)
+      }
+    } catch (e) {
+      console.error('[FP SDK] Error procesando muestra:', e.message)
+    }
+  }
+
+  fpSdk.onQualityReported = function (e) {
+    console.log('[FP SDK] Calidad reportada:', e.quality)
+  }
+
+  console.log('[FP SDK] Enumerando dispositivos...')
+  fpSdk.enumerateDevices().then(function (readers) {
+    console.log('[FP SDK] Dispositivos encontrados:', readers)
+    sdkCargando.value = false
+    if (readers && readers.length > 0) {
+      currentReaderUid = readers[0]
+      lectorConectado.value = true
+      estadoLector.value = 'Lector U.are.U 4500 listo (' + readers.length + ' dispositivo(s))'
+    } else {
+      estadoLector.value = 'No se detecto lector de huellas. ¿DigitalPersona Agent corriendo?'
+      lectorConectado.value = false
+    }
+  }, function (error) {
+    console.error('[FP SDK] Error al enumerar:', error)
+    sdkCargando.value = false
+    estadoLector.value = 'Error al buscar dispositivos: ' + (error.message || error)
+    lectorConectado.value = false
+  })
+}
+
+function iniciarCapturaSDK() {
+  console.log('[FP SDK] iniciarCapturaSDK - capturing:', capturing, 'readerUid:', currentReaderUid)
+  if (capturing) {
+    console.warn('[FP SDK] Ya esta capturando')
+    return
+  }
+  if (!currentReaderUid) {
+    console.log('[FP SDK] No hay readerUid, re-enumerando...')
+    fpSdk.enumerateDevices().then(function (readers) {
+      if (readers && readers.length > 0) {
+        currentReaderUid = readers[0]
+        lectorConectado.value = true
+        estadoLector.value = 'Lector listo'
+        iniciarCapturaSDK()
+      } else {
+        showToast('Lector no detectado. Verifique la conexion USB y el DigitalPersona Agent.', 'error')
+      }
+    })
+    return
+  }
+
+  console.log('[FP SDK] Iniciando adquisicion en', currentReaderUid, 'formato: PngImage')
+  currentFormat = Fingerprint.SampleFormat.PngImage
+  fpSdk.startAcquisition(currentFormat, currentReaderUid).then(function () {
+    console.log('[FP SDK] Adquisicion iniciada OK')
+    capturing = true
+  }, function (error) {
+    console.error('[FP SDK] Error al iniciar adquisicion:', error)
+    showToast('Error al iniciar captura: ' + (error.message || error), 'error')
+  })
+}
+
+function detenerCapturaSDK() {
+  if (!capturing || !fpSdk) return
+  console.log('[FP SDK] Deteniendo captura...')
+  fpSdk.stopAcquisition().then(function () {
+    console.log('[FP SDK] Captura detenida')
+    capturing = false
+  }, function (e) {
+    console.warn('[FP SDK] Error al detener:', e)
+    capturing = false
+  })
+}
+
+// =============================================
+// VERIFICACIÓN BIOMÉTRICA PARA ASISTENCIA
+// =============================================
+function iniciarVerificacionHuella() {
+  if (!fpSdk || !lectorConectado.value) {
+    showToast('El lector de huellas no está conectado.', 'error')
+    return
+  }
+  if (!fichaSeleccionada.value) {
+    showToast('Selecciona una ficha primero.', 'error')
+    return
+  }
+  verificandoHuella.value = true
+  ultimaVerificacion.value = null
+  modoCaptura = 'asistencia'
+  showToast('🖐️ Coloque el dedo en el lector para registrar asistencia...', 'info')
+  iniciarCapturaSDK()
+}
+
+function detenerVerificacionHuella() {
+  detenerCapturaSDK()
+  verificandoHuella.value = false
+  modoCaptura = 'enrolamiento'
+}
+
+async function procesarVerificacionAsistencia(imageBase64) {
+  try {
+    const fichaId = fichaSeleccionada.value._id
+    const result = await api.estudiantes.fingerprint.verify(imageBase64, fichaId)
+
+    if (result.match) {
+      // Encontró al estudiante: marcarlo como presente
+      const estId = result.studentId
+      const nombre = `${result.nombres} ${result.apellidos}`
+      
+      // Verificar que el estudiante pertenece a esta ficha
+      const estudianteEnFicha = estudiantesFicha.value.find(e => e._id === estId)
+      if (estudianteEnFicha) {
+        const reg = asistenciaDia.value[estId]
+        if (reg && (reg.estado === 'Presente' || reg.estado === 'Tardanza')) {
+          // Ya está marcado, no desmarcar
+          ultimaVerificacion.value = {
+            exito: true,
+            nombre: nombre,
+            estado: reg.estado,
+            hora: reg.horaMarcacion,
+          }
+          showToast(`ℹ️ ${nombre} ya estaba marcado como ${reg.estado}.`, 'info')
+        } else {
+          // Marcar como presente
+          marcarPresente(estId)
+          ultimaVerificacion.value = {
+            exito: true,
+            nombre: nombre,
+            estado: asistenciaDia.value[estId]?.estado || 'Presente',
+            hora: asistenciaDia.value[estId]?.horaMarcacion || '',
+          }
+          showToast(`✅ ${nombre} - ${asistenciaDia.value[estId]?.estado} (${asistenciaDia.value[estId]?.horaMarcacion})`, 'success')
+        }
+      } else {
+        ultimaVerificacion.value = {
+          exito: false,
+          nombre: nombre,
+          mensaje: 'Estudiante identificado pero no pertenece a esta ficha.',
+        }
+        showToast(`⚠️ ${nombre} no pertenece a esta ficha.`, 'warning')
+      }
+    } else {
+      ultimaVerificacion.value = {
+        exito: false,
+        nombre: null,
+        mensaje: 'Huella no reconocida. El estudiante puede no estar enrolado.',
+      }
+      showToast('❌ Huella no reconocida. Intente de nuevo.', 'error')
+    }
+  } catch (err) {
+    console.error('[Verificacion] Error:', err)
+    ultimaVerificacion.value = {
+      exito: false,
+      nombre: null,
+      mensaje: 'Error al verificar: ' + err.message,
+    }
+    showToast('Error al verificar huella: ' + err.message, 'error')
+  }
+
+  // Si el modo asistencia sigue activo, reactivar captura para el siguiente estudiante
+  if (verificandoHuella.value) {
+    setTimeout(() => {
+      showToast('🖐️ Lector listo para el siguiente estudiante...', 'info')
+      iniciarCapturaSDK()
+    }, 1500)
+  }
+}
+
+// =============================================
 // ENROLAMIENTO DE HUELLAS (Solo Líder)
 // =============================================
 const showEnrolarModal = ref(false)
@@ -214,34 +572,89 @@ const estudianteTarget = ref(null)
 const pasoEnrolamiento = ref(1)
 const capturasCompletadas = ref(0)
 const enrolando = ref(false)
+const enrollmentSessionId = ref(null)
+const dedoSeleccionado = ref('indice_derecho')
+
+const DEDOS = [
+  { value: 'pulgar_derecho', label: 'Pulgar Derecho' },
+  { value: 'indice_derecho', label: 'Índice Derecho' },
+  { value: 'medio_derecho', label: 'Medio Derecho' },
+  { value: 'anular_derecho', label: 'Anular Derecho' },
+  { value: 'menique_derecho', label: 'Meñique Derecho' },
+  { value: 'pulgar_izquierdo', label: 'Pulgar Izquierdo' },
+  { value: 'indice_izquierdo', label: 'Índice Izquierdo' },
+  { value: 'medio_izquierdo', label: 'Medio Izquierdo' },
+  { value: 'anular_izquierdo', label: 'Anular Izquierdo' },
+  { value: 'menique_izquierdo', label: 'Meñique Izquierdo' },
+]
 
 function abrirModalEnrolamiento(estudiante) {
   estudianteTarget.value = estudiante
   pasoEnrolamiento.value = 1
   capturasCompletadas.value = 0
   enrolando.value = false
+  enrollmentSessionId.value = null
+  dedoSeleccionado.value = 'indice_derecho'
   showEnrolarModal.value = true
 }
 
-async function simularCapturaBiometrica() {
-  enrolando.value = true
-  pasoEnrolamiento.value = 2
-
-  for (let i = 1; i <= 3; i++) {
-    await new Promise(r => setTimeout(r, 600))
-    capturasCompletadas.value = i
+async function iniciarEnrolamientoReal() {
+  if (typeof Fingerprint === 'undefined' || !fpSdk) {
+    showToast('El SDK de DigitalPersona no está disponible en la página.', 'error')
+    return
   }
 
+  enrolando.value = true
+  pasoEnrolamiento.value = 2
+  capturasCompletadas.value = 0
+
+  try {
+    const data = await api.estudiantes.fingerprint.enrollStart(
+      estudianteTarget.value._id,
+      `${estudianteTarget.value.nombres} ${estudianteTarget.value.apellidos}`,
+      estudianteTarget.value.numeroDocumento,
+      dedoSeleccionado.value
+    )
+    enrollmentSessionId.value = data.sessionId
+    iniciarCapturaSDK()
+  } catch (err) {
+    showToast('Error al iniciar enrolamiento real: ' + err.message, 'error')
+    enrolando.value = false
+    pasoEnrolamiento.value = 1
+  }
+}
+
+async function enviarCapturaAlBackend(imageBase64) {
+  if (!enrollmentSessionId.value) return
+  try {
+    const data = await api.estudiantes.fingerprint.enrollCapture(enrollmentSessionId.value, imageBase64)
+    capturasCompletadas.value = data.captures
+    showToast(`Muestra ${data.captures} de 4 registrada correctamente.`, 'info')
+
+    if (data.ready) {
+      await completarEnrolamiento()
+    } else {
+      setTimeout(() => iniciarCapturaSDK(), 600)
+    }
+  } catch (err) {
+    showToast('Error en la muestra: ' + err.message, 'error')
+    pasoEnrolamiento.value = 1
+    enrolando.value = false
+  }
+}
+
+async function completarEnrolamiento() {
+  detenerCapturaSDK()
   pasoEnrolamiento.value = 3
   try {
-    const templateId = `HUELLA_DP_${estudianteTarget.value.numeroDocumento}_${Date.now()}`
-    await api.estudiantes.enrolarHuella(estudianteTarget.value._id, templateId)
+    await api.estudiantes.fingerprint.enrollComplete(enrollmentSessionId.value)
     await cargarDatosFicha(fichaSeleccionada.value._id)
-    showToast('Huella enrolada exitosamente')
+    showToast('¡Huella enrolada exitosamente en el sensor USB!', 'success')
   } catch (err) {
     showToast('Error al guardar enrolamiento: ' + err.message, 'error')
   } finally {
     enrolando.value = false
+    enrollmentSessionId.value = null
   }
 }
 
@@ -386,6 +799,7 @@ function descargarExcel(data, nombreArchivo) {
         <h2>Bienvenido, {{ usuario.nombre }}</h2>
         <p class="subtitle">Panel de Control de Instructor SENA</p>
       </div>
+
       <div class="user-badge" style="display: flex; gap: 12px; align-items: center;">
         <span class="role-pill">Docente</span>
         <button class="btn-logout-panel" @click="cerrarSesion">
@@ -485,6 +899,13 @@ function descargarExcel(data, nombreArchivo) {
               ☝️ Enrolar Huellas
               <span v-if="!fichaSeleccionada.esLider" class="lock-icon">🔒</span>
             </button>
+            <button
+              class="tab-btn"
+              :class="{ active: vistaFicha === 'docentes' }"
+              @click="vistaFicha = 'docentes'"
+            >
+              👥 Equipo Docente
+            </button>
           </div>
         </div>
 
@@ -495,13 +916,30 @@ function descargarExcel(data, nombreArchivo) {
           <div class="section-header-row">
             <div>
               <h4>Tomar Asistencia</h4>
-              <p class="section-desc">Selecciona el estado de cada aprendiz y guarda todo al final.</p>
+              <p class="section-desc">Selecciona el estado de cada aprendiz o usa el lector de huellas.</p>
             </div>
-            <div class="section-header-actions">
+            <div class="section-header-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
               <label class="fecha-label">
                 Fecha:
                 <input type="date" v-model="fechaAsistencia" @change="inicializarAsistenciaDia" class="input-fecha" />
               </label>
+            </div>
+          </div>
+
+          <!-- Panel de verificación biométrica activa -->
+          <div v-if="verificandoHuella" class="biometric-panel">
+            <div class="biometric-pulse-icon">☝️</div>
+            <div class="biometric-panel-text">
+              <strong>Lector biométrico activo</strong>
+              <span>Esperando que los estudiantes coloquen su dedo en el sensor...</span>
+            </div>
+            <div v-if="ultimaVerificacion" class="biometric-last-result" :class="{ 'result-ok': ultimaVerificacion.exito, 'result-fail': !ultimaVerificacion.exito }">
+              <span v-if="ultimaVerificacion.exito">
+                ✅ {{ ultimaVerificacion.nombre }} — {{ ultimaVerificacion.estado }} ({{ ultimaVerificacion.hora }})
+              </span>
+              <span v-else>
+                ❌ {{ ultimaVerificacion.mensaje }}
+              </span>
             </div>
           </div>
 
@@ -513,15 +951,19 @@ function descargarExcel(data, nombreArchivo) {
             <div class="conteo-chip conteo-excusada">📋 Excusada: {{ conteoAsistencia.Excusada }}</div>
           </div>
 
+          <div class="info-alert-bar" style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px;">
+            ⏰ <strong>Cálculo Automático de Tardanza:</strong> Al marcar a un aprendiz como <strong>Presente</strong>, se captura la hora exacta. Si supera los 15 minutos de inicio de jornada ({{ fichaSeleccionada.jornada }}), se asignará automáticamente como <strong>Tardanza</strong>. Quienes queden sin marcar se registrarán como <strong>Falta</strong> al finalizar la jornada.
+          </div>
+
           <table class="data-table">
             <thead>
               <tr>
                 <th>Aprendiz</th>
                 <th>Documento</th>
-                <th>Presente</th>
-                <th>Tardanza</th>
-                <th>Falta</th>
-                <th>Excusa</th>
+                <th>Marcar Presente</th>
+                <th>Excusa (F2F)</th>
+                <th>Hora Marcación</th>
+                <th>Estado Asignado</th>
               </tr>
             </thead>
             <tbody>
@@ -530,42 +972,14 @@ function descargarExcel(data, nombreArchivo) {
                 <td><strong>{{ est.nombres }} {{ est.apellidos }}</strong></td>
                 <td>{{ est.tipoDocumento }} {{ est.numeroDocumento }}</td>
                 <td class="td-radio">
-                  <label class="radio-label">
+                  <label class="checkbox-label">
                     <input
-                      type="radio"
-                      :name="'asistencia-' + est._id"
-                      value="Presente"
-                      :checked="asistenciaDia[est._id]?.estado === 'Presente' && !asistenciaDia[est._id]?.excusa"
+                      type="checkbox"
+                      :checked="asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza'"
                       :disabled="asistenciaDia[est._id]?.excusa"
-                      @change="setEstado(est._id, 'Presente')"
+                      @change="marcarPresente(est._id)"
                     />
-                    <span class="radio-custom radio-presente"></span>
-                  </label>
-                </td>
-                <td class="td-radio">
-                  <label class="radio-label">
-                    <input
-                      type="radio"
-                      :name="'asistencia-' + est._id"
-                      value="Tardanza"
-                      :checked="asistenciaDia[est._id]?.estado === 'Tardanza' && !asistenciaDia[est._id]?.excusa"
-                      :disabled="asistenciaDia[est._id]?.excusa"
-                      @change="setEstado(est._id, 'Tardanza')"
-                    />
-                    <span class="radio-custom radio-tardanza"></span>
-                  </label>
-                </td>
-                <td class="td-radio">
-                  <label class="radio-label">
-                    <input
-                      type="radio"
-                      :name="'asistencia-' + est._id"
-                      value="Falta"
-                      :checked="asistenciaDia[est._id]?.estado === 'Falta' && !asistenciaDia[est._id]?.excusa"
-                      :disabled="asistenciaDia[est._id]?.excusa"
-                      @change="setEstado(est._id, 'Falta')"
-                    />
-                    <span class="radio-custom radio-falta"></span>
+                    <span class="checkbox-custom radio-presente"></span>
                   </label>
                 </td>
                 <td class="td-radio">
@@ -577,6 +991,23 @@ function descargarExcel(data, nombreArchivo) {
                     />
                     <span class="checkbox-custom"></span>
                   </label>
+                </td>
+                <td style="font-size: 12px; font-weight: 600; color: #475569;">
+                  {{ asistenciaDia[est._id]?.horaMarcacion || '—' }}
+                </td>
+                <td>
+                  <span v-if="asistenciaDia[est._id]?.excusa" class="badge badge-warning">
+                    📋 Excusada
+                  </span>
+                  <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge badge-success">
+                    ✅ Presente (A tiempo)
+                  </span>
+                  <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge badge-warning">
+                    ⏰ Tardanza (Retardo)
+                  </span>
+                  <span v-else class="badge badge-danger">
+                    ❌ Falta (Automática)
+                  </span>
                 </td>
               </tr>
               <tr v-if="estudiantesFicha.length === 0">
@@ -590,7 +1021,7 @@ function descargarExcel(data, nombreArchivo) {
               📥 Exportar Excel
             </button>
             <button class="btn btn-primary btn-guardar" @click="guardarAsistenciaDia" :disabled="guardandoAsistencia">
-              {{ guardandoAsistencia ? '⏳ Guardando...' : '💾 Guardar Asistencia del Día' }}
+              {{ guardandoAsistencia ? '⏳ Finalizando Jornada...' : '🔒 Finalizar Jornada y Guardar' }}
             </button>
           </div>
         </div>
@@ -755,6 +1186,68 @@ function descargarExcel(data, nombreArchivo) {
           </div>
         </div>
 
+        <!-- ========================================= -->
+        <!-- VISTA 5: EQUIPO DOCENTE DE LA FICHA       -->
+        <!-- ========================================= -->
+        <div v-if="vistaFicha === 'docentes'" class="section-body">
+          <div class="section-header-row">
+            <div>
+              <h4>Equipo Docente - Ficha {{ fichaSeleccionada.codigoFicha }}</h4>
+              <p class="section-desc">{{ fichaSeleccionada.nombrePrograma }} | Jornada: {{ fichaSeleccionada.jornada }}</p>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;">
+            <!-- DOCENTE LÍDER -->
+            <div class="docente-card" style="background: #f0fdf4; border: 2px solid #86efac; border-radius: 12px; padding: 18px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <span class="badge badge-success" style="font-weight: 700;">👑 Docente Líder</span>
+                <span v-if="String(fichaSeleccionada.instructorLiderId?._id || fichaSeleccionada.instructorLiderId) === String(usuario.id)" class="badge badge-lider" style="font-size: 11px;">(Tú)</span>
+              </div>
+              <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 6px; color: #166534;">
+                {{ fichaSeleccionada.instructorLiderId?.nombres || 'No asignado' }} {{ fichaSeleccionada.instructorLiderId?.apellidos || '' }}
+              </h4>
+              <p style="font-size: 13px; color: #374151; margin-bottom: 4px;">
+                ✉️ {{ fichaSeleccionada.instructorLiderId?.correo || 'Sin correo' }}
+              </p>
+              <p style="font-size: 13px; color: #374151; margin-bottom: 4px;" v-if="fichaSeleccionada.instructorLiderId?.telefono">
+                📞 {{ fichaSeleccionada.instructorLiderId?.telefono }}
+              </p>
+              <p style="font-size: 12px; color: #15803d; font-weight: 600; margin-top: 8px;" v-if="fichaSeleccionada.instructorLiderId?.especialidad">
+                💼 {{ fichaSeleccionada.instructorLiderId?.especialidad }}
+              </p>
+            </div>
+
+            <!-- DOCENTES COMUNES -->
+            <div
+              v-for="doc in (fichaSeleccionada.instructores || [])"
+              :key="doc._id || doc"
+              class="docente-card"
+              style="background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 18px;"
+            >
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <span class="badge badge-neutral" style="font-weight: 600;">👤 Docente Común</span>
+                <span v-if="String(doc._id || doc) === String(usuario.id)" class="badge badge-comun" style="font-size: 11px;">(Tú)</span>
+              </div>
+              <h4 style="font-size: 15px; font-weight: 700; margin-bottom: 6px; color: #1e293b;">
+                {{ doc.nombres || 'Docente' }} {{ doc.apellidos || '' }}
+              </h4>
+              <p style="font-size: 13px; color: #64748b; margin-bottom: 4px;">
+                ✉️ {{ doc.correo || 'Sin correo' }}
+              </p>
+              <p style="font-size: 13px; color: #64748b; margin-bottom: 4px;" v-if="doc.telefono">
+                📞 {{ doc.telefono }}
+              </p>
+              <p style="font-size: 12px; color: #2563eb; font-weight: 600; margin-top: 8px;" v-if="doc.especialidad">
+                💼 {{ doc.especialidad }}
+              </p>
+            </div>
+          </div>
+          <div v-if="(!fichaSeleccionada.instructores || fichaSeleccionada.instructores.length === 0)" style="padding: 16px; background: #f8fafc; border-radius: 8px; font-size: 13px; color: #64748b; margin-top: 12px;">
+            ℹ️ Esta ficha actualmente no tiene otros docentes comunes asignados.
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -799,8 +1292,8 @@ function descargarExcel(data, nombreArchivo) {
           <button class="btn btn-outline" @click="showEnrolarModal = false" :disabled="enrolando">
             {{ pasoEnrolamiento === 3 ? 'Cerrar' : 'Cancelar' }}
           </button>
-          <button v-if="pasoEnrolamiento === 1" class="btn btn-primary" @click="simularCapturaBiometrica">
-            ☝️ Iniciar Captura (USB)
+          <button v-if="pasoEnrolamiento === 1" class="btn btn-primary" @click="iniciarEnrolamientoReal" :disabled="enrolando">
+            ☝️ Iniciar Captura
           </button>
         </div>
       </div>
@@ -909,19 +1402,19 @@ function descargarExcel(data, nombreArchivo) {
 /* Toast */
 .toast-notification {
   position: fixed;
-  top: 24px;
+  bottom: 24px;
   right: 24px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 20px;
-  border-radius: 12px;
-  font-size: 14px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 600;
   z-index: 99999;
-  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
-  max-width: 420px;
-  width: calc(100vw - 48px);
+  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.18), 0 4px 10px -2px rgba(0,0,0,0.1);
+  max-width: 360px;
+  width: auto;
   word-break: break-word;
 }
 .toast-success { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
@@ -1471,5 +1964,110 @@ function descargarExcel(data, nombreArchivo) {
 @keyframes pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.15); }
+}
+
+/* ===== Biometric Attendance Panel ===== */
+.btn-biometric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #ffffff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.btn-biometric:hover:not(:disabled) {
+  background: linear-gradient(135deg, #059669, #047857);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.btn-biometric:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-biometric-stop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: #ffffff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+  animation: pulse 2s infinite;
+}
+
+.btn-biometric-stop:hover {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+}
+
+.biometric-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+  border: 2px solid #6ee7b7;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.biometric-pulse-icon {
+  font-size: 32px;
+  animation: pulse 1.5s infinite;
+}
+
+.biometric-panel-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.biometric-panel-text strong {
+  color: #065f46;
+  font-size: 14px;
+}
+
+.biometric-panel-text span {
+  color: #047857;
+  font-size: 12px;
+}
+
+.biometric-last-result {
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.biometric-last-result.result-ok {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.biometric-last-result.result-fail {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
 }
 </style>
