@@ -27,6 +27,8 @@ const perfil = reactive({
 const password = ref('')
 const confirmPassword = ref('')
 
+const esLiderCalculado = ref(false)
+
 onMounted(async () => {
   if (usuarioSesion.value) {
     perfil.id = usuarioSesion.value.id || ''
@@ -37,8 +39,11 @@ onMounted(async () => {
 
   if (esInstructor.value && perfil.id) {
     try {
-      const instructores = await api.instructores.getAll()
-      const inst = instructores.find(i => i._id === perfil.id || i.correo === perfil.correo)
+      const [instructores, misFichas] = await Promise.all([
+        api.instructores.getAll(),
+        api.fichas.getMisFichas(perfil.id).catch(() => [])
+      ])
+      const inst = instructores.find(i => String(i._id) === String(perfil.id) || i.correo === perfil.correo)
       if (inst) {
         perfil.id = inst._id
         perfil.nombres = inst.nombres || ''
@@ -50,6 +55,9 @@ onMounted(async () => {
         perfil.telefono = inst.telefono || ''
         perfil.especialidad = inst.especialidad || 'Docente SENA'
         perfil.estado = inst.estado || 'Activo'
+
+        const esLiderEnFicha = misFichas.some(f => f.esLider || String(f.instructorLiderId?._id || f.instructorLiderId) === String(inst._id))
+        esLiderCalculado.value = !!(inst.esLider || esLiderEnFicha || usuarioSesion.value?.esLider)
       }
     } catch (e) {
       console.error('Error al cargar datos del instructor:', e)
@@ -238,8 +246,17 @@ async function guardarPerfil() {
         <div class="value">{{ perfil.tipoDocumento }} {{ perfil.numeroDocumento || '—' }}</div>
       </div>
       <div class="profile-field">
-        <label>Rol</label>
-        <div class="value">{{ perfil.rol || '—' }}</div>
+        <label>Rol en la Institución</label>
+        <div class="value">
+          <template v-if="esInstructor">
+            <span class="badge" :class="esLiderCalculado ? 'badge-primary' : 'badge-neutral'" style="font-size: 13px; padding: 4px 10px; font-weight: 600;">
+              {{ esLiderCalculado ? '👥 Instructor Líder' : '👨‍🏫 Instructor Común' }}
+            </span>
+          </template>
+          <template v-else>
+            <span class="badge badge-primary" style="font-size: 13px; padding: 4px 10px;">{{ perfil.rol }}</span>
+          </template>
+        </div>
       </div>
       <div class="profile-field" v-if="esInstructor">
         <label>Especialidad</label>

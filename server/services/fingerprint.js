@@ -14,6 +14,27 @@ let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2
 const MATCH_THRESHOLD = 0x3FFFFFFF
 
 let dpfj = null
+const searchPaths = [
+  './dll/dpfj.dll',
+  'dpfj.dll',
+  'C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll',
+  'C:/Program Files (x86)/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll',
+]
+
+for (const p of searchPaths) {
+  try {
+    dpfj = koffi.load(p)
+    console.log(`[fingerprint] dpfj.dll cargado exitosamente desde: ${p}`)
+    break
+  } catch (err) {
+    // Intentar siguiente ruta
+  }
+}
+
+if (!dpfj) {
+  console.error('[fingerprint] ❌ No se pudo cargar dpfj.dll de ninguna ubicación. Verifique los drivers de DigitalPersona.')
+}
+
 try {
   dpfj = koffi.load('dpfj.dll')
   console.log('[fingerprint] dpfj.dll cargado desde PATH del sistema')

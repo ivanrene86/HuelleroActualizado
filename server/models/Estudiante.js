@@ -7,7 +7,7 @@ const estudianteSchema = new mongoose.Schema({
   numeroDocumento: { type: String, required: true },
   correo: { type: String, required: true },
   telefono: { type: String, required: true },
-  fichaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ficha', default: null },
+  fichaId: { type: mongoose.Schema.Types.Mixed, ref: 'Ficha', default: null },
   genero: { type: String, default: '' },
   estado: { type: String, enum: ['Activo', 'Inactivo', 'Retirado'], default: 'Activo' },
   motivo: { type: String, default: '' },

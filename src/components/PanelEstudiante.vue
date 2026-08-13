@@ -46,12 +46,8 @@ async function cargarDatosEstudiante() {
         instructorLider.value = ficha.value.instructorLiderId
       }
 
-      const [asisRes, excRes] = await Promise.all([
-        api.asistencias.getAll({ estudianteId: estudiante.value._id }),
-        api.excusas.getAll({ estudianteId: estudiante.value._id })
-      ])
+      const asisRes = await api.asistencias.getAll({ estudianteId: estudiante.value._id })
       asistencias.value = asisRes
-      excusas.value = excRes
     }
   } catch (err) {
     error.value = err.message || 'Error al cargar información del aprendiz'

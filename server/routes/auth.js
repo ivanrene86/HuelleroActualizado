@@ -2,6 +2,7 @@ import { Router } from 'express'
 import Admin from '../models/Admin.js'
 import Instructor from '../models/Instructor.js'
 import Estudiante from '../models/Estudiante.js'
+import Ficha from '../models/Ficha.js'
 
 const router = Router()
 
@@ -28,11 +29,13 @@ router.post('/login', async (req, res) => {
       if (instructor.estado === 'Inactivo') {
         return res.status(403).json({ error: 'Tu cuenta de instructor se encuentra inactiva' })
       }
+      const fichaLider = await Ficha.findOne({ instructorLiderId: instructor._id })
+      const esLider = !!(instructor.esLider || fichaLider)
       const nombreCompleto = `${instructor.nombres} ${instructor.apellidos}`
       return res.json({
         ok: true,
-        usuario: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor' },
-        admin: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor' }
+        usuario: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor', esLider, rolDetallado: esLider ? 'Instructor Líder' : 'Instructor Común' },
+        admin: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor', esLider, rolDetallado: esLider ? 'Instructor Líder' : 'Instructor Común' }
       })
     }
 

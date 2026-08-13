@@ -34,13 +34,29 @@ async function loadFichas() {
 }
 
 function getFichaById(fichaId) {
-  return fichasList.value.find(f => f._id === fichaId)
+  if (!fichaId) return null
+  const idTarget = typeof fichaId === 'object' ? String(fichaId._id || '') : String(fichaId).trim()
+  return fichasList.value.find(f =>
+    String(f._id) === idTarget ||
+    String(f.codigoFicha).trim() === idTarget
+  )
 }
 
 const estudiantesFiltrados = computed(() => {
   let lista = estudiantes.value
   if (filtroEstado.value !== 'Todos') lista = lista.filter(e => e.estado === filtroEstado.value)
-  if (busqueda.fichaId) lista = lista.filter(e => e.fichaId === busqueda.fichaId)
+  if (busqueda.fichaId) {
+    const targetFicha = getFichaById(busqueda.fichaId)
+    const targetIds = [String(busqueda.fichaId)]
+    if (targetFicha) {
+      targetIds.push(String(targetFicha._id))
+      targetIds.push(String(targetFicha.codigoFicha))
+    }
+    lista = lista.filter(e => {
+      const eFichaId = typeof e.fichaId === 'object' ? String(e.fichaId?._id || '') : String(e.fichaId || '')
+      return targetIds.includes(eFichaId)
+    })
+  }
   if (busqueda.jornada) {
     lista = lista.filter(e => {
       const ficha = getFichaById(e.fichaId)

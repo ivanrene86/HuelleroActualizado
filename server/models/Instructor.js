@@ -10,6 +10,7 @@ const instructorSchema = new mongoose.Schema({
   especialidad: { type: String, required: true },
   password: { type: String, default: 'sena2026' },
   rol: { type: String, enum: ['Instructor'], default: 'Instructor' },
+  esLider: { type: Boolean, default: false },
   estado: { type: String, enum: ['Activo', 'Inactivo'], default: 'Activo' },
   motivo: { type: String, default: '' },
 }, { timestamps: true, collection: 'instructores' })

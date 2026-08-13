@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import Estudiante from '../models/Estudiante.js'
+import Ficha from '../models/Ficha.js'
+import mongoose from 'mongoose'
 import * as fp from '../services/fingerprint.js'
 
 const router = Router()
@@ -8,7 +10,28 @@ router.get('/', async (req, res) => {
   try {
     const { fichaId, documento, nombres, estado } = req.query
     const filter = {}
-    if (fichaId) filter.fichaId = fichaId
+    if (fichaId) {
+      const idsBuscar = [fichaId]
+      if (mongoose.Types.ObjectId.isValid(fichaId)) {
+        idsBuscar.push(new mongoose.Types.ObjectId(fichaId))
+      }
+      try {
+        const queryFicha = []
+        if (mongoose.Types.ObjectId.isValid(fichaId)) {
+          queryFicha.push({ _id: fichaId })
+        }
+        queryFicha.push({ codigoFicha: String(fichaId).trim() })
+        
+        const fichaDoc = await Ficha.findOne({ $or: queryFicha })
+        if (fichaDoc) {
+          idsBuscar.push(fichaDoc._id)
+          idsBuscar.push(String(fichaDoc._id))
+          if (fichaDoc.codigoFicha) idsBuscar.push(fichaDoc.codigoFicha)
+        }
+      } catch (e) {}
+
+      filter.fichaId = { $in: idsBuscar }
+    }
     if (estado) filter.estado = estado
     if (documento) filter.numeroDocumento = { $regex: documento, $options: 'i' }
     if (nombres) {
@@ -41,6 +64,10 @@ router.post('/', async (req, res) => {
 router.post('/enroll-start', async (req, res) => {
   if (!fp.isAvailable()) {
     return res.status(500).json({ success: false, error: 'SDK de huella no disponible. Instale el U.are.U SDK.' })
+  }
+  const { studentId, name, documento, dedo } = req.body
+  if (!studentId || !name) {
+    return res.status(400).json({ success: false, error: 'studentId y name son requeridos' })
   }
   const { studentId, name, documento } = req.body
   if (!studentId || !name) {
@@ -131,6 +158,29 @@ router.post('/verify', async (req, res) => {
 
   try {
     const filter = { huellaEnrolada: true, huellaTemplate: { $ne: '' } }
+    if (fichaId) {
+      // Misma lógica flexible que GET /estudiantes para resolver fichaId Mixed
+      const idsBuscar = [fichaId]
+      if (mongoose.Types.ObjectId.isValid(fichaId)) {
+        idsBuscar.push(new mongoose.Types.ObjectId(fichaId))
+      }
+      try {
+        const queryFicha = []
+        if (mongoose.Types.ObjectId.isValid(fichaId)) {
+          queryFicha.push({ _id: fichaId })
+        }
+        queryFicha.push({ codigoFicha: String(fichaId).trim() })
+        const fichaDoc = await Ficha.findOne({ $or: queryFicha })
+        if (fichaDoc) {
+          idsBuscar.push(fichaDoc._id)
+          idsBuscar.push(String(fichaDoc._id))
+          if (fichaDoc.codigoFicha) idsBuscar.push(fichaDoc.codigoFicha)
+        }
+      } catch (e) {}
+      filter.fichaId = { $in: idsBuscar }
+    }
+    const enrolledStudents = await Estudiante.find(filter)
+    console.log(`[verify] Buscando estudiantes enrolados con fichaId=${fichaId}, encontrados: ${enrolledStudents.length}`)
     if (fichaId) filter.fichaId = fichaId
     const enrolledStudents = await Estudiante.find(filter)
     const result = fp.verifyFingerprint(imageBase64, enrolledStudents)
