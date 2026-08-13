@@ -7,8 +7,8 @@ const router = Router()
 router.get('/', async (req, res) => {
   try {
     const fichas = await Ficha.find()
-      .populate('instructorLiderId', 'nombres apellidos correo especialidad telefono')
-      .populate('instructores', 'nombres apellidos correo especialidad telefono')
+      .populate('instructorLiderId', 'nombres apellidos correo')
+      .populate('instructores', 'nombres apellidos correo')
       .sort({ createdAt: -1 })
     res.json(fichas)
   } catch (err) {
@@ -25,8 +25,8 @@ router.get('/mis-fichas/:instructorId', async (req, res) => {
         { instructores: instructorId }
       ]
     })
-      .populate('instructorLiderId', 'nombres apellidos correo especialidad telefono')
-      .populate('instructores', 'nombres apellidos correo especialidad telefono')
+      .populate('instructorLiderId', 'nombres apellidos correo')
+      .populate('instructores', 'nombres apellidos correo')
       .sort({ createdAt: -1 })
 
     const resultado = fichas.map(f => {
@@ -39,19 +39,6 @@ router.get('/mis-fichas/:instructorId', async (req, res) => {
     })
 
     res.json(resultado)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-router.get('/:id/plantillas-biometricas', async (req, res) => {
-  try {
-    const estudiantes = await Estudiante.find({
-      fichaId: req.params.id,
-      huellaEnrolada: true
-    }).select('_id nombres apellidos numeroDocumento huellaTemplate')
-
-    res.json(estudiantes)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
