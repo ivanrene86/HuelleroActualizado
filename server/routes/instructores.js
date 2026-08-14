@@ -66,7 +66,6 @@ router.post('/importar', async (req, res) => {
     let actualizados = 0
 
     for (const instData of instructores) {
-<<<<<<< HEAD
       const { fichaId, fichas, esLider, ...rest } = instData
       if (!rest.password) rest.password = 'sena2026'
       if (!rest.rol) rest.rol = 'Instructor'
