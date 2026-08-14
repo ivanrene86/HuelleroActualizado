@@ -102,17 +102,73 @@ const asistenciaDia = ref({})
 const guardandoAsistencia = ref(false)
 const fechaAsistencia = ref(new Date().toISOString().split('T')[0])
 
+function calcularHorasTardanza(horaMarcacionStr, jornada) {
+  if (!horaMarcacionStr) return { horas: 0, texto: '0 horas' }
+
+  // Horarios de inicio oficial:
+  // Mañana: 6:00 AM (360 min) -> Tolerancia hasta 6:15 AM (375 min)
+  // Tarde: 12:30 PM (750 min) -> Tolerancia hasta 12:45 PM (765 min)
+  // Noche: 6:30 PM / 18:30 (1110 min) -> Tolerancia hasta 6:45 PM (1125 min)
+  let inicioMin = 360 // 6:00 AM por defecto
+  let limiteTolerancia = 375 // 6:15 AM
+
+  if (jornada === 'Tarde') {
+    inicioMin = 750 // 12:30 PM
+    limiteTolerancia = 765 // 12:45 PM
+  } else if (jornada === 'Noche') {
+    inicioMin = 1110 // 6:30 PM (18:30)
+    limiteTolerancia = 1125 // 6:45 PM
+  }
+
+  let minutosMarcacion = 0
+  if (horaMarcacionStr instanceof Date) {
+    minutosMarcacion = horaMarcacionStr.getHours() * 60 + horaMarcacionStr.getMinutes()
+  } else if (typeof horaMarcacionStr === 'string') {
+    const esPM = /p\.?\s*m\.?/i.test(horaMarcacionStr)
+    const esAM = /a\.?\s*m\.?/i.test(horaMarcacionStr)
+    const match = horaMarcacionStr.match(/(\d{1,2}):(\d{1,2})/)
+    if (match) {
+      let h = parseInt(match[1], 10)
+      const m = parseInt(match[2], 10)
+      if (esPM && h < 12) h += 12
+      if (esAM && h === 12) h = 0
+      minutosMarcacion = h * 60 + m
+    }
+  }
+
+  if (minutosMarcacion <= limiteTolerancia) {
+    return { horas: 0, texto: '0 horas' }
+  }
+
+  const minutosPasadosInicio = minutosMarcacion - inicioMin
+  const horasTardanza = Math.max(1, Math.ceil(minutosPasadosInicio / 60))
+
+  return {
+    horas: horasTardanza,
+    texto: `${horasTardanza} ${horasTardanza === 1 ? 'hora' : 'horas'}`
+  }
+}
+
 function inicializarAsistenciaDia() {
   const hoy = fechaAsistencia.value
+  const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   const registros = {}
   for (const est of estudiantesFicha.value) {
     const existente = asistenciasFicha.value.find(
       a => a.estudianteId === est._id && a.fecha === hoy
     )
+    const estado = existente ? existente.estado : 'Ninguno'
+    const hora = existente ? (existente.hora || '') : ''
+    const tardanzaInfo = estado === 'Tardanza'
+      ? (existente.tiempoTardanza ? { horas: existente.horasTardanza || 1, texto: existente.tiempoTardanza } : calcularHorasTardanza(hora, jornadaFicha))
+      : { horas: 0, texto: '0 horas' }
+
     registros[est._id] = {
-      estado: existente ? existente.estado : 'Ninguno',
+      estado,
       excusa: existente ? existente.estado === 'Excusada' : false,
-      horaMarcacion: existente ? (existente.hora || '') : '',
+      horaMarcacion: hora,
+      horasTardanza: tardanzaInfo.horas,
+      tiempoTardanza: tardanzaInfo.texto,
     }
   }
   asistenciaDia.value = registros
@@ -124,16 +180,11 @@ function calcularEstadoPorHora(jornada) {
   const minuto = ahora.getMinutes()
   const minutosTotales = hora * 60 + minuto
 
-  // Tolerancia de 15 minutos según jornada:
-  // Mañana: 7:00 AM (420 min) -> Tolerancia hasta 7:15 AM (435 min)
-  // Tarde: 1:00 PM (13:00 = 780 min) -> Tolerancia hasta 1:15 PM (795 min)
-  // Noche: 6:00 PM (18:00 = 1080 min) -> Tolerancia hasta 6:15 PM (1095 min)
-
-  let limiteTolerancia = 435 // 7:15 AM por defecto
+  let limiteTolerancia = 375 // 6:15 AM por defecto
   if (jornada === 'Tarde') {
-    limiteTolerancia = 795 // 1:15 PM
+    limiteTolerancia = 765 // 12:45 PM
   } else if (jornada === 'Noche') {
-    limiteTolerancia = 1095 // 6:15 PM
+    limiteTolerancia = 1125 // 6:45 PM
   }
 
   return minutosTotales > limiteTolerancia ? 'Tardanza' : 'Presente'
@@ -147,14 +198,19 @@ function marcarPresente(estId) {
     // Desmarcar al hacer clic de nuevo
     reg.estado = 'Ninguno'
     reg.horaMarcacion = ''
+    reg.horasTardanza = 0
+    reg.tiempoTardanza = '0 horas'
   } else {
     const ahora = new Date()
     const horaFormateada = ahora.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
     const estadoCalculado = calcularEstadoPorHora(jornadaFicha)
+    const tardanzaInfo = estadoCalculado === 'Tardanza' ? calcularHorasTardanza(ahora, jornadaFicha) : { horas: 0, texto: '0 horas' }
 
     reg.estado = estadoCalculado
     reg.horaMarcacion = horaFormateada
+    reg.horasTardanza = tardanzaInfo.horas
+    reg.tiempoTardanza = tardanzaInfo.texto
     reg.excusa = false
   }
 }
@@ -168,6 +224,8 @@ function toggleExcusa(estId) {
     } else {
       reg.estado = 'Ninguno'
       reg.horaMarcacion = ''
+      reg.horasTardanza = 0
+      reg.tiempoTardanza = '0 horas'
     }
   }
 }
@@ -176,13 +234,16 @@ async function guardarAsistenciaDia() {
   guardandoAsistencia.value = true
   const hoy = fechaAsistencia.value
   const horaActual = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   let exitosos = 0
   let errores = 0
 
   for (const est of estudiantesFicha.value) {
     const reg = asistenciaDia.value[est._id]
-    let estadoFinal = 'Falta' // Falla automática por defecto para quien no asistió
+    let estadoFinal = 'Falta'
     let horaMarcada = horaActual
+    let hTardanza = 0
+    let tTardanza = '0 horas'
 
     if (reg) {
       if (reg.excusa) {
@@ -191,6 +252,11 @@ async function guardarAsistenciaDia() {
       } else if (['Presente', 'Tardanza', 'Excusada'].includes(reg.estado)) {
         estadoFinal = reg.estado
         horaMarcada = reg.horaMarcacion || horaActual
+        if (estadoFinal === 'Tardanza') {
+          const calc = calcularHorasTardanza(horaMarcada, jornadaFicha)
+          hTardanza = reg.horasTardanza || calc.horas
+          tTardanza = reg.tiempoTardanza || calc.texto
+        }
       }
     }
 
@@ -201,6 +267,8 @@ async function guardarAsistenciaDia() {
         estado: estadoFinal,
         fecha: hoy,
         hora: horaMarcada,
+        horasTardanza: hTardanza,
+        tiempoTardanza: tTardanza,
       })
       exitosos++
     } catch (err) {
@@ -238,43 +306,7 @@ const conteoAsistencia = computed(() => {
   return conteo
 })
 
-// =============================================
-// GESTIÓN DE EXCUSAS
-// =============================================
-async function aprobarExcusa(excusaId) {
-  try {
-    await api.excusas.aprobar(excusaId)
-    await cargarDatosFicha(fichaSeleccionada.value._id)
-    showToast('Excusa aprobada correctamente')
-  } catch (err) {
-    showToast('Error al aprobar excusa: ' + err.message, 'error')
-  }
-}
 
-const showRechazoModal = ref(false)
-const excusaArechazar = ref(null)
-const motivoRechazo = ref('')
-
-function abrirRechazo(excusaId) {
-  excusaArechazar.value = excusaId
-  motivoRechazo.value = ''
-  showRechazoModal.value = true
-}
-
-async function confirmarRechazo() {
-  if (!motivoRechazo.value.trim()) {
-    showToast('Ingresa el motivo del rechazo', 'error')
-    return
-  }
-  try {
-    await api.excusas.rechazar(excusaArechazar.value, motivoRechazo.value)
-    await cargarDatosFicha(fichaSeleccionada.value._id)
-    showRechazoModal.value = false
-    showToast('Excusa rechazada')
-  } catch (err) {
-    showToast('Error al rechazar excusa: ' + err.message, 'error')
-  }
-}
 
 // =============================================
 // SEMÁFORO DE ESTADO (WS SERVIDORES + LECTORES USB)
@@ -716,13 +748,21 @@ async function guardarEstudiante() {
 // =============================================
 function exportarAsistenciaDia() {
   const hoy = fechaAsistencia.value
+  const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   const data = estudiantesFicha.value.map(est => {
     const reg = asistenciaDia.value[est._id]
+    const estadoStr = reg ? (reg.excusa ? 'Excusada' : reg.estado) : 'Sin registro'
+    let tardanzaStr = '0 horas'
+    if (estadoStr === 'Tardanza') {
+      tardanzaStr = reg?.tiempoTardanza || calcularHorasTardanza(reg?.horaMarcacion, jornadaFicha).texto
+    }
     return {
       'Aprendiz': `${est.nombres} ${est.apellidos}`,
       'Tipo Doc.': est.tipoDocumento,
       'Documento': est.numeroDocumento,
-      'Estado': reg ? (reg.excusa ? 'Excusada' : reg.estado) : 'Sin registro',
+      'Estado': estadoStr,
+      'Hora Marcación': reg?.horaMarcacion || '—',
+      'Tiempo de Tardanza': tardanzaStr,
       'Excusa': reg?.excusa ? 'Sí' : 'No',
       'Fecha': hoy,
     }
@@ -731,14 +771,20 @@ function exportarAsistenciaDia() {
 }
 
 function exportarHistorial() {
+  const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   const data = asistenciasFicha.value.map(asis => {
     const est = estudiantesFicha.value.find(e => e._id === asis.estudianteId)
+    let tardanzaStr = '0 horas'
+    if (asis.estado === 'Tardanza') {
+      tardanzaStr = asis.tiempoTardanza || calcularHorasTardanza(asis.hora, jornadaFicha).texto
+    }
     return {
       'Fecha': asis.fecha,
       'Hora': asis.hora || '—',
       'Aprendiz': est ? `${est.nombres} ${est.apellidos}` : asis.estudianteId,
       'Documento': est ? est.numeroDocumento : '',
       'Estado': asis.estado,
+      'Tiempo de Tardanza': tardanzaStr,
     }
   })
   descargarExcel(data, `Historial_${fichaSeleccionada.value.codigoFicha}`)
@@ -1003,7 +1049,7 @@ function descargarExcel(data, nombreArchivo) {
                     ✅ Presente (A tiempo)
                   </span>
                   <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge badge-warning">
-                    ⏰ Tardanza (Retardo)
+                    ⏰ Tardanza ({{ asistenciaDia[est._id]?.tiempoTardanza || '1 hora' }})
                   </span>
                   <span v-else class="badge badge-danger">
                     ❌ Falta (Automática)
@@ -1046,6 +1092,7 @@ function descargarExcel(data, nombreArchivo) {
                 <th>Fecha / Hora</th>
                 <th>Aprendiz</th>
                 <th>Estado</th>
+                <th>Tiempo Tardanza</th>
               </tr>
             </thead>
             <tbody>
@@ -1057,9 +1104,12 @@ function descargarExcel(data, nombreArchivo) {
                     {{ asis.estado || asis.tipo }}
                   </span>
                 </td>
+                <td style="font-size: 12px; font-weight: 600; color: #64748b;">
+                  {{ asis.estado === 'Tardanza' ? (asis.tiempoTardanza || '1 hora') : '0 horas' }}
+                </td>
               </tr>
               <tr v-if="asistenciasFicha.length === 0">
-                <td colspan="3" class="empty-cell">No hay registros de asistencias pasadas.</td>
+                <td colspan="4" class="empty-cell">No hay registros de asistencias pasadas.</td>
               </tr>
             </tbody>
           </table>
@@ -1369,26 +1419,7 @@ function descargarExcel(data, nombreArchivo) {
       </div>
     </div>
 
-    <!-- ========================================= -->
-    <!-- MODAL RECHAZAR EXCUSA                     -->
-    <!-- ========================================= -->
-    <div v-if="showRechazoModal" class="modal-overlay" @click.self="showRechazoModal = false">
-      <div class="modal" style="max-width: 420px;">
-        <h3>Rechazar Excusa</h3>
-        <p style="color: #64748b; font-size: 14px; margin-bottom: 16px;">Ingresa el motivo del rechazo:</p>
-        <textarea
-          v-model="motivoRechazo"
-          class="form-input"
-          rows="3"
-          placeholder="Motivo del rechazo..."
-          style="width: 100%; resize: vertical;"
-        ></textarea>
-        <div class="modal-actions">
-          <button class="btn btn-outline" @click="showRechazoModal = false">Cancelar</button>
-          <button class="btn btn-danger-solid" @click="confirmarRechazo">Rechazar</button>
-        </div>
-      </div>
-    </div>
+
 
   </div>
 </template>

@@ -171,7 +171,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
             <td><span class="badge badge-success">{{ i.especialidad }}</span></td>
             <td>
               <span class="badge" :class="i.esLider ? 'badge-primary' : 'badge-neutral'" style="font-size: 12px; font-weight: 600;">
-                {{ i.esLider ? '👥 Instructor Líder' : '👨‍🏫 Instructor Común' }}
+                {{ i.esLider ? ' Instructor Líder' : ' Instructor Común' }}
               </span>
             </td>
             <td>

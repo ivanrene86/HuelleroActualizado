@@ -79,18 +79,44 @@ const estadoSistema = reactive({
 
 let statusInterval = null
 
+let fpSdkCheck = null
+
 async function verificarEstadoRealSistema() {
-  // 1. Verificar Servidor Backend y SDK Nativo
+  // 1. Verificar Servidor Backend
   try {
     const res = await api.estudiantes.fingerprint.status()
-    estadoSistema.estadoWebSocket = 'Conectado'
-    estadoSistema.estadoLectorUSB = (typeof Fingerprint !== 'undefined') ? 'Conectado' : 'Desconectado'
+    if (res && res.sdkAvailable !== undefined) {
+      estadoSistema.estadoWebSocket = 'Conectado'
+    } else {
+      estadoSistema.estadoWebSocket = 'Desconectado'
+    }
   } catch (err) {
     estadoSistema.estadoWebSocket = 'Desconectado'
     estadoSistema.estadoLectorUSB = 'Desconectado'
+    estadoSistema.colorSemaforo = 'rojo'
+    return
   }
 
-  // 2. Evaluar Color del Semáforo General
+  // 2. Verificar Lector USB Físico vía SDK
+  if (typeof Fingerprint !== 'undefined') {
+    try {
+      if (!fpSdkCheck) {
+        fpSdkCheck = new Fingerprint.WebApi()
+      }
+      const readers = await fpSdkCheck.enumerateDevices()
+      if (readers && readers.length > 0) {
+        estadoSistema.estadoLectorUSB = 'Conectado'
+      } else {
+        estadoSistema.estadoLectorUSB = 'Desconectado'
+      }
+    } catch (e) {
+      estadoSistema.estadoLectorUSB = 'Desconectado'
+    }
+  } else {
+    estadoSistema.estadoLectorUSB = 'Desconectado'
+  }
+
+  // 3. Evaluar Color del Semáforo General
   if (estadoSistema.estadoWebSocket === 'Conectado' && estadoSistema.estadoLectorUSB === 'Conectado') {
     estadoSistema.colorSemaforo = 'verde'
   } else if (estadoSistema.estadoWebSocket === 'Conectado') {
@@ -259,11 +285,7 @@ onUnmounted(() => {
             <line x1="16" y1="17" x2="8" y2="17"/>
             <polyline points="10 9 9 9 8 9"/>
           </svg>
-          <svg v-if="key === 'excusas'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <path d="M9 15l2 2 4-4"/>
-          </svg>
+
           <svg v-if="key === 'diasFestivos'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
             <line x1="16" y1="2" x2="16" y2="6"/>

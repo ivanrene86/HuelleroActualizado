@@ -70,25 +70,45 @@ router.post('/importar', async (req, res) => {
     }
 
     let creados = 0
+    let actualizados = 0
+
     for (const instData of instructores) {
-      const { fichaId, esLider, ...rest } = instData
+      const { fichaId, fichas, esLider, ...rest } = instData
       if (!rest.password) rest.password = 'sena2026'
       if (!rest.rol) rest.rol = 'Instructor'
 
-      const instructor = new Instructor(rest)
-      await instructor.save()
-      creados++
+      let instructor = await Instructor.findOne({ numeroDocumento: String(rest.numeroDocumento).trim() })
+      if (!instructor) {
+        instructor = new Instructor(rest)
+        await instructor.save()
+        creados++
+      } else {
+        await Instructor.findByIdAndUpdate(instructor._id, rest)
+        actualizados++
+      }
 
-      if (fichaId) {
-        if (esLider) {
-          await Ficha.findByIdAndUpdate(fichaId, { instructorLiderId: instructor._id })
-        } else {
-          await Ficha.findByIdAndUpdate(fichaId, { $addToSet: { instructores: instructor._id } })
+      // Normalizar lista de fichas (puede venir en 'fichas' array o 'fichaId' simple)
+      let listaFichas = []
+      if (Array.isArray(fichas) && fichas.length > 0) {
+        listaFichas = fichas
+      } else if (fichaId) {
+        listaFichas = [{ fichaId, esLider: !!esLider }]
+      }
+
+      for (const item of listaFichas) {
+        const targetFichaId = item.fichaId || item
+        const esLiderFicha = item.esLider !== undefined ? item.esLider : esLider
+        if (targetFichaId) {
+          if (esLiderFicha) {
+            await Ficha.findByIdAndUpdate(targetFichaId, { instructorLiderId: instructor._id })
+          } else {
+            await Ficha.findByIdAndUpdate(targetFichaId, { $addToSet: { instructores: instructor._id } })
+          }
         }
       }
     }
 
-    res.status(201).json({ ok: true, count: creados })
+    res.status(201).json({ ok: true, count: creados, updatedCount: actualizados })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
