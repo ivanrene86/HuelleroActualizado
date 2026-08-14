@@ -77,13 +77,6 @@ export default {
         return request('/estudiantes/fingerprint-status')
       }
     }
-      status() { return request('/estudiantes/fingerprint-status') },
-      enrollStart(studentId, name, documento, dedo) { return request('/estudiantes/enroll-start', { method: 'POST', body: JSON.stringify({ studentId, name, documento, dedo }) }) },
-      enrollCapture(sessionId, image) { return request('/estudiantes/enroll-capture', { method: 'POST', body: JSON.stringify({ sessionId, image }) }) },
-      verify(image, fichaId) { return request('/estudiantes/verify', { method: 'POST', body: JSON.stringify({ image, fichaId }) }) },
-      enrollComplete(sessionId) { return request('/estudiantes/enroll-complete', { method: 'POST', body: JSON.stringify({ sessionId }) }) },
-      enrollCancel(sessionId) { return request('/estudiantes/enroll-cancel', { method: 'POST', body: JSON.stringify({ sessionId }) }) },
-    },
   },
 
   asistencias: {
