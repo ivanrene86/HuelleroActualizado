@@ -89,6 +89,19 @@ async function cargarDatosFicha(fichaId) {
     estudiantesFicha.value = Array.isArray(estRes) ? estRes : []
     asistenciasFicha.value = Array.isArray(asisRes) ? asisRes : []
     memoriaBiometricaRAM.value = Array.isArray(bioRes) ? bioRes : []
+    const [estRes, asisRes] = await Promise.all([
+      api.estudiantes.getAll({ fichaId }),
+      api.asistencias.getAll({ fichaId }),
+    ])
+    estudiantesFicha.value = estRes
+    asistenciasFicha.value = asisRes
+
+    try {
+      excusasFicha.value = await api.excusas.getAll({ fichaId })
+    } catch {
+      excusasFicha.value = []
+    }
+
     inicializarAsistenciaDia()
   } catch (err) {
     console.error('Error al cargar detalle de ficha:', err)
@@ -598,12 +611,15 @@ async function procesarVerificacionAsistencia(imageBase64) {
 
 // =============================================
 // ENROLAMIENTO DE HUELLAS (Solo Líder)
+// ENROLAMIENTO DE HUELLAS (Solo Líder) - SDK REAL
 // =============================================
 const showEnrolarModal = ref(false)
 const estudianteTarget = ref(null)
 const pasoEnrolamiento = ref(1)
 const capturasCompletadas = ref(0)
 const enrolando = ref(false)
+const sdkDisponible = ref(false)
+const estadoLector = ref('Verificando...')
 const enrollmentSessionId = ref(null)
 const dedoSeleccionado = ref('indice_derecho')
 
@@ -620,6 +636,176 @@ const DEDOS = [
   { value: 'menique_izquierdo', label: 'Meñique Izquierdo' },
 ]
 
+let fpSdk = null
+let currentReaderUid = ''
+let capturing = false
+let sdkInitIntentos = 0
+let currentFormat = null
+
+function initFingerprintSDK() {
+  sdkInitIntentos++
+  console.log('[FP SDK] Intento', sdkInitIntentos, '- verificando Fingerprint global...')
+
+  if (typeof Fingerprint === 'undefined') {
+    console.warn('[FP SDK] Fingerprint global no definido aun.')
+    estadoLector.value = 'SDK no cargado - scripts faltantes'
+    if (sdkInitIntentos < 10) {
+      setTimeout(initFingerprintSDK, 1000)
+    } else {
+      estadoLector.value = 'SDK no disponible tras varios intentos'
+    }
+    return
+  }
+
+  console.log('[FP SDK] Fingerprint global OK, creando WebApi...')
+  try {
+    fpSdk = new Fingerprint.WebApi()
+    console.log('[FP SDK] WebApi creado:', fpSdk)
+  } catch (e) {
+    console.error('[FP SDK] Error al crear WebApi:', e.message)
+    estadoLector.value = 'Error al inicializar SDK: ' + e.message
+    return
+  }
+
+  fpSdk.onDeviceConnected = function (e) {
+    console.log('[FP SDK] Dispositivo conectado:', e)
+    if (e && e.deviceUid) currentReaderUid = e.deviceUid
+    sdkDisponible.value = true
+    estadoLector.value = 'Lector conectado - U.are.U 4500'
+  }
+
+  fpSdk.onDeviceDisconnected = function (e) {
+    console.log('[FP SDK] Dispositivo desconectado:', e)
+    sdkDisponible.value = false
+    currentReaderUid = ''
+    estadoLector.value = 'Lector desconectado'
+  }
+
+  fpSdk.onCommunicationFailed = function (e) {
+    console.error('[FP SDK] Error de comunicacion:', e)
+    estadoLector.value = 'Error de comunicacion con el lector'
+    sdkDisponible.value = false
+  }
+
+  fpSdk.onSamplesAcquired = function (s) {
+    console.log('[FP SDK] Muestra adquirida')
+    detenerCapturaSDK()
+    try {
+      const samples = JSON.parse(s.samples)
+      if (!samples || samples.length === 0) {
+        console.warn('[FP SDK] No hay samples en la respuesta')
+        return
+      }
+      const imgSrc = 'data:image/png;base64,' + Fingerprint.b64UrlTo64(samples[0])
+      console.log('[FP SDK] PNG generado, size:', imgSrc.length)
+      enviarCapturaAlBackend(imgSrc)
+    } catch (e) {
+      console.error('[FP SDK] Error procesando muestra:', e.message)
+    }
+  }
+
+  fpSdk.onQualityReported = function (e) {
+    console.log('[FP SDK] Calidad reportada:', e.quality)
+  }
+
+  console.log('[FP SDK] Enumerando dispositivos...')
+  fpSdk.enumerateDevices().then(function (readers) {
+    console.log('[FP SDK] Dispositivos encontrados:', readers)
+    if (readers && readers.length > 0) {
+      currentReaderUid = readers[0]
+      sdkDisponible.value = true
+      estadoLector.value = 'Lector U.are.U 4500 listo (' + readers.length + ' dispositivo(s))'
+    } else {
+      estadoLector.value = 'No se detecto lector de huellas. ¿DigitalPersona Agent corriendo?'
+      sdkDisponible.value = false
+    }
+  }, function (error) {
+    console.error('[FP SDK] Error al enumerar:', error)
+    estadoLector.value = 'Error al buscar dispositivos: ' + (error.message || error)
+    sdkDisponible.value = false
+  })
+}
+
+function iniciarCapturaSDK() {
+  console.log('[FP SDK] iniciarCapturaSDK - capturing:', capturing, 'readerUid:', currentReaderUid)
+  if (capturing) {
+    console.warn('[FP SDK] Ya esta capturando')
+    return
+  }
+  if (!currentReaderUid) {
+    console.log('[FP SDK] No hay readerUid, re-enumerando...')
+    fpSdk.enumerateDevices().then(function (readers) {
+      if (readers && readers.length > 0) {
+        currentReaderUid = readers[0]
+        sdkDisponible.value = true
+        estadoLector.value = 'Lector listo'
+        iniciarCapturaSDK()
+      } else {
+        showToast('Lector no detectado. Verifique la conexion USB y el DigitalPersona Agent.', 'error')
+      }
+    })
+    return
+  }
+
+  console.log('[FP SDK] Iniciando adquisicion en', currentReaderUid, 'formato: PngImage')
+  currentFormat = Fingerprint.SampleFormat.PngImage
+  fpSdk.startAcquisition(currentFormat, currentReaderUid).then(function () {
+    console.log('[FP SDK] Adquisicion iniciada OK')
+    capturing = true
+  }, function (error) {
+    console.error('[FP SDK] Error al iniciar adquisicion:', error)
+    showToast('Error al iniciar captura: ' + (error.message || error), 'error')
+  })
+}
+
+function detenerCapturaSDK() {
+  if (!capturing || !fpSdk) return
+  console.log('[FP SDK] Deteniendo captura...')
+  fpSdk.stopAcquisition().then(function () {
+    console.log('[FP SDK] Captura detenida')
+    capturing = false
+  }, function (e) {
+    console.warn('[FP SDK] Error al detener:', e)
+    capturing = false
+  })
+}
+
+async function enviarCapturaAlBackend(imageBase64) {
+  if (!enrollmentSessionId.value) return
+  console.log('[FP] Enviando captura PNG al backend, session:', enrollmentSessionId.value)
+  try {
+    const data = await api.estudiantes.fingerprint.enrollCapture(enrollmentSessionId.value, imageBase64)
+    console.log('[FP] Respuesta backend:', data)
+    capturasCompletadas.value = data.captures
+    if (data.ready) {
+      console.log('[FP] Listo para completar enrolamiento')
+      await completarEnrolamiento()
+    } else {
+      setTimeout(() => iniciarCapturaSDK(), 500)
+    }
+  } catch (err) {
+    console.error('[FP] Error en captura:', err)
+    showToast('Error en captura: ' + err.message, 'error')
+    pasoEnrolamiento.value = 1
+    enrolando.value = false
+  }
+}
+
+async function completarEnrolamiento() {
+  detenerCapturaSDK()
+  pasoEnrolamiento.value = 3
+  try {
+    const data = await api.estudiantes.fingerprint.enrollComplete(enrollmentSessionId.value)
+    await cargarDatosFicha(fichaSeleccionada.value._id)
+    showToast('Huella enrolada exitosamente - ' + dedoSeleccionado.value.replace('_', ' '))
+  } catch (err) {
+    showToast('Error al guardar enrolamiento: ' + err.message, 'error')
+  } finally {
+    enrolando.value = false
+    enrollmentSessionId.value = null
+  }
+}
+
 function abrirModalEnrolamiento(estudiante) {
   estudianteTarget.value = estudiante
   pasoEnrolamiento.value = 1
@@ -627,7 +813,9 @@ function abrirModalEnrolamiento(estudiante) {
   enrolando.value = false
   enrollmentSessionId.value = null
   dedoSeleccionado.value = 'indice_derecho'
+  dedoSeleccionado.value = estudiante.dedoEnrolado || 'indice_derecho'
   showEnrolarModal.value = true
+  console.log('[FP] Modal abierto para:', estudiante.nombres, estudiante.apellidos)
 }
 
 async function iniciarEnrolamientoReal() {
@@ -636,6 +824,10 @@ async function iniciarEnrolamientoReal() {
     return
   }
 
+  if (!sdkDisponible.value) {
+    showToast('Lector de huellas no disponible. Revise la conexion USB.', 'error')
+    return
+  }
   enrolando.value = true
   pasoEnrolamiento.value = 2
   capturasCompletadas.value = 0
@@ -682,12 +874,36 @@ async function completarEnrolamiento() {
     await api.estudiantes.fingerprint.enrollComplete(enrollmentSessionId.value)
     await cargarDatosFicha(fichaSeleccionada.value._id)
     showToast('¡Huella enrolada exitosamente en el sensor USB!', 'success')
+  console.log('[FP] Iniciando enrolamiento, dedo:', dedoSeleccionado.value)
+
+  try {
+    const data = await api.estudiantes.fingerprint.enrollStart(
+      estudianteTarget.value._id,
+      estudianteTarget.value.nombres + ' ' + estudianteTarget.value.apellidos,
+      estudianteTarget.value.numeroDocumento,
+      dedoSeleccionado.value
+    )
+    console.log('[FP] Sesion creada:', data)
+    enrollmentSessionId.value = data.sessionId
+    iniciarCapturaSDK()
   } catch (err) {
-    showToast('Error al guardar enrolamiento: ' + err.message, 'error')
-  } finally {
+    console.error('[FP] Error al iniciar:', err)
+    showToast('Error al iniciar enrolamiento: ' + err.message, 'error')
     enrolando.value = false
     enrollmentSessionId.value = null
+    pasoEnrolamiento.value = 1
   }
+}
+
+function cancelarEnrolamiento() {
+  detenerCapturaSDK()
+  if (enrollmentSessionId.value) {
+    api.estudiantes.fingerprint.enrollCancel(enrollmentSessionId.value).catch(() => { })
+    enrollmentSessionId.value = null
+  }
+  showEnrolarModal.value = false
+  enrolando.value = false
+  pasoEnrolamiento.value = 1
 }
 
 // =============================================
@@ -1202,6 +1418,7 @@ function descargarExcel(data, nombreArchivo) {
                   <th>Aprendiz</th>
                   <th>Documento</th>
                   <th>Estado Huella</th>
+                  <th>Dedo</th>
                   <th>Fecha Enrolamiento</th>
                   <th>Acción Biométrica</th>
                 </tr>
@@ -1218,6 +1435,7 @@ function descargarExcel(data, nombreArchivo) {
                       🟡 Pendiente
                     </span>
                   </td>
+                  <td>{{ DEDOS.find(d => d.value === est.dedoEnrolado)?.label || '—' }}</td>
                   <td>{{ est.fechaEnrolamiento || 'Sin registro' }}</td>
                   <td>
                     <button class="btn-sm btn-success" @click="abrirModalEnrolamiento(est)">
@@ -1226,7 +1444,7 @@ function descargarExcel(data, nombreArchivo) {
                   </td>
                 </tr>
                 <tr v-if="estudiantesFicha.length === 0">
-                  <td colspan="5" class="empty-cell">No hay aprendices registrados en esta ficha.</td>
+                  <td colspan="6" class="empty-cell">No hay aprendices registrados en esta ficha.</td>
                 </tr>
               </tbody>
             </table>
@@ -1304,13 +1522,22 @@ function descargarExcel(data, nombreArchivo) {
     <!-- ========================================= -->
     <!-- MODAL DE ENROLAMIENTO BIOMÉTRICO          -->
     <!-- ========================================= -->
-    <div v-if="showEnrolarModal" class="modal-overlay" @click.self="showEnrolarModal = false">
+    <div v-if="showEnrolarModal" class="modal-overlay" @click.self="cancelarEnrolamiento">
       <div class="modal" style="max-width: 480px; text-align: center; padding: 28px;">
         <h3>☝️ Enrolamiento Biométrico de Huella</h3>
-        <p style="color: #64748b; font-size: 14px; margin-bottom: 20px;">
+        <p style="color: #64748b; font-size: 14px; margin-bottom: 12px;">
           Aprendiz: <strong>{{ estudianteTarget?.nombres }} {{ estudianteTarget?.apellidos }}</strong><br>
           <small>Documento: {{ estudianteTarget?.tipoDocumento }} {{ estudianteTarget?.numeroDocumento }}</small>
         </p>
+
+        <div v-if="pasoEnrolamiento === 1" style="margin-bottom: 16px;">
+          <label style="display: block; font-size: 13px; color: #475569; margin-bottom: 4px; text-align: left;">
+            🖐️ Dedo a enrolar:
+          </label>
+          <select v-model="dedoSeleccionado" class="form-input" style="width: 100%; padding: 8px 12px; font-size: 13px;">
+            <option v-for="d in DEDOS" :key="d.value" :value="d.value">{{ d.label }}</option>
+          </select>
+        </div>
 
         <div class="sensor-box">
           <div class="fingerprint-icon">
@@ -1319,31 +1546,43 @@ function descargarExcel(data, nombreArchivo) {
             <span v-else>✅</span>
           </div>
 
-          <div v-if="pasoEnrolamiento === 1">
-            <h4 style="color: #1e293b; margin-bottom: 6px;">Lector USB U.are.U 4500 Listo</h4>
-            <p style="color: #64748b; font-size: 13px;">Haz clic en "Capturar Muestra" para solicitar la huella al aprendiz.</p>
+          <div v-if="!sdkDisponible" style="margin-top: 10px;">
+            <p style="color: #ef4444; font-size: 13px;">⚠️ {{ estadoLector }}</p>
+            <p style="color: #64748b; font-size: 11px;">Conecte el lector U.are.U 4500 y asegúrese de que el DigitalPersona Agent esté corriendo (puerto 9001).</p>
+          </div>
+
+          <div v-if="pasoEnrolamiento === 1 && sdkDisponible">
+            <h4 style="color: #1e293b; margin-bottom: 6px;">{{ estadoLector }}</h4>
+            <p style="color: #64748b; font-size: 13px;">
+              Dedo seleccionado: <strong>{{ DEDOS.find(d => d.value === dedoSeleccionado)?.label || dedoSeleccionado }}</strong>
+            </p>
+            <p style="color: #64748b; font-size: 13px;">Haz clic en "Iniciar Captura" y coloca el dedo del aprendiz en el lector.</p>
           </div>
 
           <div v-if="pasoEnrolamiento === 2">
-            <h4 style="color: #2563eb; margin-bottom: 6px;">Capturando Muestras...</h4>
-            <p style="color: #64748b; font-size: 13px;">Coloque y levante el dedo del sensor 3 veces</p>
+            <h4 style="color: #2563eb; margin-bottom: 6px;">Capturando huella...</h4>
+            <p style="color: #64748b; font-size: 13px;">Coloque y levante el dedo del sensor varias veces</p>
             <div style="font-size: 16px; font-weight: 700; color: #2563eb; margin-top: 10px;">
-              Muestra {{ capturasCompletadas }} / 3 completada(s)
+              Muestra {{ capturasCompletadas }} completada(s)
             </div>
           </div>
 
           <div v-if="pasoEnrolamiento === 3">
             <h4 style="color: #16a34a; margin-bottom: 6px;">¡Huella Enrolada Exitosamente!</h4>
-            <p style="color: #15803d; font-size: 13px;">La plantilla biométrica se guardó correctamente en la base de datos.</p>
+            <p style="color: #15803d; font-size: 13px;">
+              {{ DEDOS.find(d => d.value === dedoSeleccionado)?.label || dedoSeleccionado }} - Plantilla biométrica guardada.
+            </p>
           </div>
         </div>
 
         <div style="display: flex; gap: 12px; justify-content: center;">
-          <button class="btn btn-outline" @click="showEnrolarModal = false" :disabled="enrolando">
+          <button class="btn btn-outline" @click="cancelarEnrolamiento">
             {{ pasoEnrolamiento === 3 ? 'Cerrar' : 'Cancelar' }}
           </button>
           <button v-if="pasoEnrolamiento === 1" class="btn btn-primary" @click="iniciarEnrolamientoReal" :disabled="enrolando">
             ☝️ Iniciar Captura
+          <button v-if="pasoEnrolamiento === 1" class="btn btn-primary" @click="iniciarEnrolamientoReal" :disabled="!sdkDisponible">
+            ☝️ Iniciar Captura (USB)
           </button>
         </div>
       </div>

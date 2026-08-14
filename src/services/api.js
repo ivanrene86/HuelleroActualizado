@@ -77,6 +77,13 @@ export default {
         return request('/estudiantes/fingerprint-status')
       }
     }
+      status() { return request('/estudiantes/fingerprint-status') },
+      enrollStart(studentId, name, documento, dedo) { return request('/estudiantes/enroll-start', { method: 'POST', body: JSON.stringify({ studentId, name, documento, dedo }) }) },
+      enrollCapture(sessionId, image) { return request('/estudiantes/enroll-capture', { method: 'POST', body: JSON.stringify({ sessionId, image }) }) },
+      verify(image, fichaId) { return request('/estudiantes/verify', { method: 'POST', body: JSON.stringify({ image, fichaId }) }) },
+      enrollComplete(sessionId) { return request('/estudiantes/enroll-complete', { method: 'POST', body: JSON.stringify({ sessionId }) }) },
+      enrollCancel(sessionId) { return request('/estudiantes/enroll-cancel', { method: 'POST', body: JSON.stringify({ sessionId }) }) },
+    },
   },
 
   asistencias: {
@@ -85,6 +92,16 @@ export default {
       return request(`/asistencias${query ? '?' + query : ''}`)
     },
     create(body) { return request('/asistencias', { method: 'POST', body: JSON.stringify(body) }) },
+  },
+
+  excusas: {
+    getAll(params = {}) {
+      const query = new URLSearchParams(params).toString()
+      return request(`/excusas${query ? '?' + query : ''}`)
+    },
+    create(body) { return request('/excusas', { method: 'POST', body: JSON.stringify(body) }) },
+    aprobar(id) { return request(`/excusas/${id}/aprobar`, { method: 'PUT' }) },
+    rechazar(id, motivoRechazo) { return request(`/excusas/${id}/rechazar`, { method: 'PUT', body: JSON.stringify({ motivoRechazo }) }) },
   },
 
   diasFestivos: {

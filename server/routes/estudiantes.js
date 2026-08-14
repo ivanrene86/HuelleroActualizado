@@ -69,6 +69,11 @@ router.post('/enroll-start', async (req, res) => {
   if (!studentId || !name) {
     return res.status(400).json({ success: false, error: 'studentId y name son requeridos' })
   }
+  const { studentId, name, documento } = req.body
+  if (!studentId || !name) {
+    return res.status(400).json({ success: false, error: 'studentId y name son requeridos' })
+  }
+  const { dedo } = req.body
   try {
     const estudiante = await Estudiante.findById(studentId)
     if (!estudiante) {
@@ -176,6 +181,8 @@ router.post('/verify', async (req, res) => {
     }
     const enrolledStudents = await Estudiante.find(filter)
     console.log(`[verify] Buscando estudiantes enrolados con fichaId=${fichaId}, encontrados: ${enrolledStudents.length}`)
+    if (fichaId) filter.fichaId = fichaId
+    const enrolledStudents = await Estudiante.find(filter)
     const result = fp.verifyFingerprint(imageBase64, enrolledStudents)
     res.json({ success: true, ...result })
   } catch (err) {

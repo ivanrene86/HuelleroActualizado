@@ -27,14 +27,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const data = {
-      password: 'sena2026',
-      rol: 'Instructor',
-      ...req.body
-    }
-    if (!data.password) data.password = 'sena2026'
-
-    const instructor = new Instructor(data)
+    const instructor = new Instructor(req.body)
     await instructor.save()
     res.status(201).json(instructor)
   } catch (err) {
@@ -73,6 +66,7 @@ router.post('/importar', async (req, res) => {
     let actualizados = 0
 
     for (const instData of instructores) {
+<<<<<<< HEAD
       const { fichaId, fichas, esLider, ...rest } = instData
       if (!rest.password) rest.password = 'sena2026'
       if (!rest.rol) rest.rol = 'Instructor'

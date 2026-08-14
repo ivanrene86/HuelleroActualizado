@@ -35,6 +35,18 @@ if (!dpfj) {
   console.error('[fingerprint] ❌ No se pudo cargar dpfj.dll de ninguna ubicación. Verifique los drivers de DigitalPersona.')
 }
 
+try {
+  dpfj = koffi.load('dpfj.dll')
+  console.log('[fingerprint] dpfj.dll cargado desde PATH del sistema')
+} catch (e) {
+  try {
+    dpfj = koffi.load('C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll')
+    console.log('[fingerprint] dpfj.dll cargado desde SDK x64')
+  } catch (e2) {
+    console.error('[fingerprint] No se pudo cargar dpfj.dll:', e.message)
+  }
+}
+
 let dpfj_start_enrollment, dpfj_add_to_enrollment, dpfj_create_enrollment_fmd
 let dpfj_finish_enrollment, dpfj_create_fmd_from_raw, dpfj_compare
 

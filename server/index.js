@@ -10,6 +10,7 @@ import fichasRoutes from './routes/fichas.js'
 import estudiantesRoutes from './routes/estudiantes.js'
 import asistenciasRoutes from './routes/asistencias.js'
 import diasFestivosRoutes from './routes/diasFestivos.js'
+import excusasRoutes from './routes/excusas.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -31,30 +32,53 @@ transporter.verify()
   .then(() => console.log('SMTP listo'))
   .catch((err) => console.error('Error SMTP:', err.message))
 
-mongoose.connect(process.env.MONGODB_URI)
+const MONGO_OPTS = {
+  serverSelectionTimeoutMS: 15000,
+  connectTimeoutMS: 15000,
+  socketTimeoutMS: 30000,
+}
+
+mongoose.connect(process.env.MONGODB_URI, MONGO_OPTS)
   .then(async () => {
-    console.log('MongoDB conectado')
-
-    const existeAdmin = await Admin.findOne({ correo: 'senahuellero@gmail.com' })
-    if (!existeAdmin) {
-      await new Admin({
-        nombre: 'Administrador',
-        rol: 'Administrador',
-        telefono: '',
-        correo: 'senahuellero@gmail.com',
-        password: 'sena2026ADSO',
-      }).save()
-      console.log('Admin por defecto creado')
+    console.log('MongoDB Atlas conectado')
+    await iniciarServidor()
+  })
+  .catch(async (err) => {
+    console.error('Error MongoDB Atlas:', err.message)
+    console.error('Revisa:')
+    console.error('  1. Cluster encendido en https://cloud.mongodb.com')
+    console.error('  2. Usuario y password correctos en Database Access')
+    console.error('  3. Network Access con 0.0.0.0/0 (ya configurado)')
+    console.error('  4. Si usas VPN o proxy, desactivalo y prueba de nuevo')
+    console.log('\nIntentando MongoDB local...')
+    try {
+      await mongoose.connect('mongodb://localhost:27017/huellero', MONGO_OPTS)
+      console.log('MongoDB local conectado')
+      await iniciarServidor()
+    } catch (err2) {
+      console.error('Error MongoDB local:', err2.message)
+      console.error('\nInstala MongoDB local: https://www.mongodb.com/try/download/community')
+      process.exit(1)
     }
+  })
 
-    app.listen(PORT, () => {
-      console.log(`Backend en http://localhost:${PORT}`)
-    })
+async function iniciarServidor() {
+  const existeAdmin = await Admin.findOne({ correo: 'senahuellero@gmail.com' })
+  if (!existeAdmin) {
+    await new Admin({
+      nombre: 'Administrador',
+      rol: 'Administrador',
+      telefono: '',
+      correo: 'senahuellero@gmail.com',
+      password: 'sena2026ADSO',
+    }).save()
+    console.log('Admin por defecto creado')
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Backend en http://localhost:${PORT}`)
   })
-  .catch((err) => {
-    console.error('Error MongoDB:', err.message)
-    process.exit(1)
-  })
+}
 
 app.post('/api/enviar-codigo', async (req, res) => {
   const { correo, codigo } = req.body
@@ -82,3 +106,4 @@ app.use('/api/fichas', fichasRoutes)
 app.use('/api/estudiantes', estudiantesRoutes)
 app.use('/api/asistencias', asistenciasRoutes)
 app.use('/api/dias-festivos', diasFestivosRoutes)
+app.use('/api/excusas', excusasRoutes)
