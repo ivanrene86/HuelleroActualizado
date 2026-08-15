@@ -23,8 +23,16 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { estudianteId, fichaId, fecha, estado, hora } = req.body
-    const asistencia = new Asistencia({ estudianteId, fichaId, fecha, estado, hora })
+    const { estudianteId, fichaId, fecha, estado, hora, horasTardanza, tiempoTardanza } = req.body
+    const asistencia = new Asistencia({
+      estudianteId,
+      fichaId,
+      fecha,
+      estado,
+      hora,
+      horasTardanza: horasTardanza || 0,
+      tiempoTardanza: tiempoTardanza || (horasTardanza ? `${horasTardanza} ${horasTardanza === 1 ? 'hora' : 'horas'}` : '0 horas')
+    })
     await asistencia.save()
 
     await Estudiante.findByIdAndUpdate(estudianteId, { estadoAsistencia: estado })

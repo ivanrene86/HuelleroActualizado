@@ -6,6 +6,8 @@ const asistenciaSchema = new mongoose.Schema({
   fecha: { type: String, required: true },
   estado: { type: String, enum: ['Presente', 'Tardanza', 'Falta', 'Excusada'], required: true },
   hora: { type: String, default: '—' },
+  horasTardanza: { type: Number, default: 0 },
+  tiempoTardanza: { type: String, default: '0 horas' },
 }, { timestamps: true, collection: 'asistencias' })
 
 export default mongoose.model('Asistencia', asistenciaSchema)

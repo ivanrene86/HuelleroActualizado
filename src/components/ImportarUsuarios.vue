@@ -107,6 +107,15 @@ function validarHeaders(headers) {
   return headersEsperados.value.every(h => headers.includes(h))
 }
 
+function obtenerFichasPorCadena(cadena) {
+  if (!cadena) return []
+  const codigos = String(cadena).split(/[,;/|]+/).map(c => c.trim()).filter(Boolean)
+  return codigos.map(cod => ({
+    codigo: cod,
+    ficha: getFichaPorCodigo(cod)
+  }))
+}
+
 function validarFila(row) {
   const errs = []
   const requeridos = headersEsperados.value
@@ -129,11 +138,20 @@ function validarFila(row) {
       errs.push(`Correo inválido: "${row.Correo}"`)
     }
     if (row.Ficha) {
-      const ficha = getFichaPorCodigo(row.Ficha)
-      if (!ficha) {
-        errs.push(`Ficha no encontrada: "${row.Ficha}". Debes crear la ficha previamente o cargar el archivo de fichas`)
-      } else if (row.Jornada && ficha.jornada !== row.Jornada) {
-        errs.push(`Jornada "${row.Jornada}" no coincide con la ficha "${row.Ficha}" (${ficha.jornada})`)
+      if (tipoImportacion.value === 'instructores') {
+        const fichasBuscadas = obtenerFichasPorCadena(row.Ficha)
+        fichasBuscadas.forEach(fb => {
+          if (!fb.ficha) {
+            errs.push(`Ficha no encontrada: "${fb.codigo}". Debes crear la ficha previamente o cargar el archivo de fichas`)
+          }
+        })
+      } else {
+        const ficha = getFichaPorCodigo(row.Ficha)
+        if (!ficha) {
+          errs.push(`Ficha no encontrada: "${row.Ficha}". Debes crear la ficha previamente o cargar el archivo de fichas`)
+        } else if (row.Jornada && ficha.jornada !== row.Jornada) {
+          errs.push(`Jornada "${row.Jornada}" no coincide con la ficha "${row.Ficha}" (${ficha.jornada})`)
+        }
       }
     }
     if (tipoImportacion.value === 'instructores' && row.Es_Lider) {
@@ -151,10 +169,12 @@ function detectarAdvertencia(row) {
     const valLider = String(row.Es_Lider).trim().toUpperCase()
     const esLiderVal = ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(valLider)
     if (esLiderVal) {
-      const ficha = getFichaPorCodigo(row.Ficha)
-      if (ficha && ficha.instructorLiderId) {
-        const nombreActualLider = getInstructorNombre(ficha.instructorLiderId)
-        return `La Ficha ${row.Ficha} ya tiene asignado como Líder a ${nombreActualLider || 'otro docente'}. Al importar, se actualizará a ${row.Nombres} ${row.Apellidos}.`
+      const fichasBuscadas = obtenerFichasPorCadena(row.Ficha)
+      for (const fb of fichasBuscadas) {
+        if (fb.ficha && fb.ficha.instructorLiderId) {
+          const nombreActualLider = getInstructorNombre(fb.ficha.instructorLiderId)
+          return `La Ficha ${fb.codigo} ya tiene asignado como Líder a ${nombreActualLider || 'otro docente'}. Al importar, se actualizará a ${row.Nombres} ${row.Apellidos}.`
+        }
       }
     }
   }
@@ -193,27 +213,30 @@ function procesarArchivo(event) {
       const errs = validarFila(row)
 
       // VERIFICACIÓN ANTI-DUPLICADOS DE DOCUMENTO/CÓDIGO
-      if (tipoImportacion.value !== 'fichas') {
+      if (tipoImportacion.value === 'estudiantes') {
         const docNum = String(row.Num_Doc || '').trim()
         if (docNum) {
-          // 1. Duplicado dentro del mismo archivo CSV
           if (documentosEnArchivo.has(docNum)) {
             errs.push(`Documento duplicado en el archivo: El número "${docNum}" ya aparece previamente en la línea ${documentosEnArchivo.get(docNum)}`)
           } else {
             documentosEnArchivo.set(docNum, row._linea)
           }
 
-          // 2. Duplicado contra la Base de Datos
-          if (tipoImportacion.value === 'estudiantes') {
-            const existeEnBD = estudiantesExistentes.value.find(e => String(e.numeroDocumento).trim() === docNum)
-            if (existeEnBD) {
-              errs.push(`Documento ya registrado en la base de datos: El número "${docNum}" ya pertenece al aprendiz ${existeEnBD.nombres} ${existeEnBD.apellidos}`)
-            }
-          } else if (tipoImportacion.value === 'instructores') {
-            const existeEnBD = instructoresExistentes.value.find(i => String(i.numeroDocumento).trim() === docNum)
-            if (existeEnBD) {
-              errs.push(`Documento ya registrado en la base de datos: El número "${docNum}" ya pertenece al docente ${existeEnBD.nombres} ${existeEnBD.apellidos}`)
-            }
+          const existeEnBD = estudiantesExistentes.value.find(e => String(e.numeroDocumento).trim() === docNum)
+          if (existeEnBD) {
+            errs.push(`Documento ya registrado en la base de datos: El número "${docNum}" ya pertenece al aprendiz ${existeEnBD.nombres} ${existeEnBD.apellidos}`)
+          }
+        }
+      } else if (tipoImportacion.value === 'instructores') {
+        const docNum = String(row.Num_Doc || '').trim()
+        if (docNum) {
+          const existeEnBD = instructoresExistentes.value.find(i => String(i.numeroDocumento).trim() === docNum)
+          if (existeEnBD) {
+            row._infoMultificha = `El docente ya está registrado previamente (${existeEnBD.nombres} ${existeEnBD.apellidos}). Se le asignará la(s) nueva(s) ficha(s).`
+          } else if (documentosEnArchivo.has(docNum)) {
+            row._infoMultificha = `El docente ya aparece en la línea ${documentosEnArchivo.get(docNum)}. Se le asignarán múltiples fichas.`
+          } else {
+            documentosEnArchivo.set(docNum, row._linea)
           }
         }
       } else {
@@ -274,9 +297,16 @@ async function ejecutarImportacion() {
       showToastFn(`${registros.value.length} fichas importadas correctamente`)
     } else if (tipoImportacion.value === 'instructores') {
       const items = registros.value.map(r => {
-        const ficha = getFichaPorCodigo(r.Ficha)
+        const fichasBuscadas = obtenerFichasPorCadena(r.Ficha)
         const valLider = String(r.Es_Lider || '').trim().toUpperCase()
         const esLiderVal = ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(valLider)
+        
+        const listaFichas = fichasBuscadas
+          .filter(fb => fb.ficha)
+          .map(fb => ({ fichaId: fb.ficha._id, esLider: esLiderVal }))
+
+        const primeraFicha = fichasBuscadas[0]?.ficha
+
         return {
           nombres: r.Nombres,
           apellidos: r.Apellidos,
@@ -284,8 +314,8 @@ async function ejecutarImportacion() {
           numeroDocumento: r.Num_Doc,
           correo: r.Correo,
           telefono: r.Telefono,
-          especialidad: ficha ? ficha.nombrePrograma : 'Docente SENA',
-          fichaId: ficha ? ficha._id : null,
+          especialidad: primeraFicha ? primeraFicha.nombrePrograma : 'Docente SENA',
+          fichas: listaFichas,
           esLider: esLiderVal,
           password: 'sena2026',
           rol: 'Instructor',
@@ -293,7 +323,7 @@ async function ejecutarImportacion() {
         }
       })
       await api.instructores.importar(items)
-      showToastFn(`${registros.value.length} docentes / instructores importados correctamente`)
+      showToastFn(`${registros.value.length} registro(s) de docentes procesados e impartiendo sus respectivas fichas`)
     } else {
       const items = registros.value.map(r => {
         const ficha = getFichaPorCodigo(r.Ficha)
@@ -335,9 +365,9 @@ function descargarPlantilla() {
   } else if (tipoImportacion.value === 'instructores') {
     nombreArchivo = 'carga_masiva_instructores.csv'
     contenido = `Tipo_Doc,Num_Doc,Nombres,Apellidos,Genero,Correo,Telefono,Ficha,Es_Lider,Jornada
-CC,1055443301,Carlos Alberto,Mendoza Pérez,Masculino,carlos.mendoza@sena.edu.co,3104567890,2670123,SI,Mañana
+CC,1055443301,Carlos Alberto,Mendoza Pérez,Masculino,carlos.mendoza@sena.edu.co,3104567890,"2670123, 2891234",SI,Mañana
 CC,1055443302,Patricia Elena,Jaramillo Morales,Femenino,patricia.jaramillo@sena.edu.co,3156789012,2891234,SI,Tarde
-CC,1055443303,Roberto Antonio,Gómez Restrepo,Masculino,roberto.gomez@sena.edu.co,3123456789,2901122,SI,Noche
+CC,1055443303,Roberto Antonio,Gómez Restrepo,Masculino,roberto.gomez@sena.edu.co,3123456789,"2901122 / 2670123",NO,Noche
 CC,1055443304,María Fernanda,Suárez Castro,Femenino,maria.suarez@sena.edu.co,3189012345,2670123,NO,Mañana`
   } else {
     nombreArchivo = 'carga_masiva_estudiantes.csv'
@@ -419,7 +449,7 @@ function limpiarTodo() {
         
         <ul v-if="tipoImportacion === 'instructores'" style="margin-top: 10px;">
           <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
-          <li><strong>Ficha:</strong> Código de la ficha asignada al docente (ej. 2670123)</li>
+          <li><strong>Ficha:</strong> Código(s) de la ficha asignada. Para que un docente dicte <strong>más de una clase / ficha</strong>, puedes separar los códigos con comas o barras (ej: <code>"2670123, 2891234"</code>) o registrar al docente en filas separadas.</li>
           <li><strong>Es_Lider:</strong> Pon <code>SI</code> si el docente es el Líder de la ficha, o <code>NO</code> si es Docente Común</li>
           <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
         </ul>
@@ -530,10 +560,13 @@ function limpiarTodo() {
                   </span>
                 </td>
                 <td>
+                  <span v-if="r._infoMultificha" class="badge badge-warning" :title="r._infoMultificha" style="margin-right: 4px;">
+                    📚 Multi-Clase
+                  </span>
                   <span v-if="r._advertencia" class="badge badge-warning" :title="r._advertencia">
                     ⚠️ Reemplazará Líder
                   </span>
-                  <span v-else class="text-muted" style="font-size: 11px;">—</span>
+                  <span v-if="!r._infoMultificha && !r._advertencia" class="text-muted" style="font-size: 11px;">—</span>
                 </td>
               </template>
               <template v-else>
