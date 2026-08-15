@@ -85,6 +85,8 @@ export default {
       return request(`/asistencias${query ? '?' + query : ''}`)
     },
     create(body) { return request('/asistencias', { method: 'POST', body: JSON.stringify(body) }) },
+    inhabilitarJornada(body) { return request('/asistencias/inhabilitar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
+    reactivarJornada(body) { return request('/asistencias/reactivar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
   },
 
   excusas: {

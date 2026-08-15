@@ -96,11 +96,84 @@ async function cargarDatosFicha(fichaId) {
 }
 
 // =============================================
-// TOMA DE ASISTENCIA CON CHECKBOX DE EXCUSA
+// TOMA DE ASISTENCIA Y GESTIÓN DE JORNADA
 // =============================================
 const asistenciaDia = ref({})
 const guardandoAsistencia = ref(false)
 const fechaAsistencia = ref(new Date().toISOString().split('T')[0])
+
+// Estado de inhabilitación de jornada
+const showInhabilitarModal = ref(false)
+const motivoInhabilitar = ref('Reunión institucional / Actividad SENA')
+const motivoInhabilitarOtro = ref('')
+const inhabilitando = ref(false)
+
+const jornadaInhabilitada = computed(() => {
+  const hoy = fechaAsistencia.value
+  const registrosHoy = asistenciasFicha.value.filter(a => a.fecha === hoy)
+  return registrosHoy.length > 0 && registrosHoy.some(a => a.estado === 'Inhabilitada')
+})
+
+const motivoInhabilitacionDia = computed(() => {
+  const hoy = fechaAsistencia.value
+  const reg = asistenciasFicha.value.find(a => a.fecha === hoy && a.estado === 'Inhabilitada')
+  return reg?.motivoInhabilitacion || 'Jornada no impartida'
+})
+
+function cambiarFechaDia(delta) {
+  const [y, m, d] = fechaAsistencia.value.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + delta)
+  fechaAsistencia.value = dt.toISOString().split('T')[0]
+  inicializarAsistenciaDia()
+}
+
+function irAHoy() {
+  fechaAsistencia.value = new Date().toISOString().split('T')[0]
+  inicializarAsistenciaDia()
+}
+
+function abrirModalInhabilitar() {
+  motivoInhabilitar.value = 'Reunión institucional / Actividad SENA'
+  motivoInhabilitarOtro.value = ''
+  showInhabilitarModal.value = true
+}
+
+async function confirmarInhabilitarJornada() {
+  inhabilitando.value = true
+  const motivoFinal = motivoInhabilitar.value === 'Otro' ? (motivoInhabilitarOtro.value.trim() || 'Jornada no impartida') : motivoInhabilitar.value
+  try {
+    await api.asistencias.inhabilitarJornada({
+      fichaId: fichaSeleccionada.value._id,
+      fecha: fechaAsistencia.value,
+      motivo: motivoFinal,
+      instructorId: usuario.value.id || null,
+    })
+    await cargarDatosFicha(fichaSeleccionada.value._id)
+    showInhabilitarModal.value = false
+    showToast(`🚫 Sesión del ${fechaAsistencia.value} inhabilitada correctamente.`, 'info')
+  } catch (err) {
+    showToast('Error al inhabilitar jornada: ' + err.message, 'error')
+  } finally {
+    inhabilitando.value = false
+  }
+}
+
+async function reactivarJornada() {
+  inhabilitando.value = true
+  try {
+    await api.asistencias.reactivarJornada({
+      fichaId: fichaSeleccionada.value._id,
+      fecha: fechaAsistencia.value,
+    })
+    await cargarDatosFicha(fichaSeleccionada.value._id)
+    showToast(`🟢 Sesión del ${fechaAsistencia.value} reactivada exitosamente.`, 'success')
+  } catch (err) {
+    showToast('Error al reactivar jornada: ' + err.message, 'error')
+  } finally {
+    inhabilitando.value = false
+  }
+}
 
 function calcularHorasTardanza(horaMarcacionStr, jornada) {
   if (!horaMarcacionStr) return { horas: 0, texto: '0 horas' }
@@ -155,7 +228,7 @@ function inicializarAsistenciaDia() {
   const registros = {}
   for (const est of estudiantesFicha.value) {
     const existente = asistenciasFicha.value.find(
-      a => a.estudianteId === est._id && a.fecha === hoy
+      a => (String(a.estudianteId?._id || a.estudianteId) === String(est._id)) && a.fecha === hoy
     )
     const estado = existente ? existente.estado : 'Ninguno'
     const hora = existente ? (existente.hora || '') : ''
@@ -191,6 +264,10 @@ function calcularEstadoPorHora(jornada) {
 }
 
 function marcarPresente(estId) {
+  if (jornadaInhabilitada.value) {
+    showToast('La sesión está inhabilitada. Reactívala para tomar asistencia.', 'warning')
+    return
+  }
   const reg = asistenciaDia.value[estId]
   if (!reg) return
 
@@ -216,6 +293,10 @@ function marcarPresente(estId) {
 }
 
 function toggleExcusa(estId) {
+  if (jornadaInhabilitada.value) {
+    showToast('La sesión está inhabilitada. Reactívala para registrar excusas.', 'warning')
+    return
+  }
   const reg = asistenciaDia.value[estId]
   if (reg) {
     reg.excusa = !reg.excusa
@@ -231,6 +312,10 @@ function toggleExcusa(estId) {
 }
 
 async function guardarAsistenciaDia() {
+  if (jornadaInhabilitada.value) {
+    showToast('Esta sesión ya se encuentra guardada como inhabilitada.', 'info')
+    return
+  }
   guardandoAsistencia.value = true
   const hoy = fechaAsistencia.value
   const horaActual = new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -269,6 +354,7 @@ async function guardarAsistenciaDia() {
         hora: horaMarcada,
         horasTardanza: hTardanza,
         tiempoTardanza: tTardanza,
+        instructorId: usuario.value.id || null,
       })
       exitosos++
     } catch (err) {
@@ -281,7 +367,7 @@ async function guardarAsistenciaDia() {
   guardandoAsistencia.value = false
 
   if (errores === 0) {
-    showToast(`✅ Jornada finalizada. Asistencias, tardanzas por horario y fallas guardadas.`)
+    showToast(`✅ Jornada finalizada. Asistencias guardadas exitosamente.`)
   } else {
     showToast(`⚠️ ${exitosos} guardados, ${errores} con error`, 'warning')
   }
@@ -289,6 +375,9 @@ async function guardarAsistenciaDia() {
 
 // Contadores de asistencia del día
 const conteoAsistencia = computed(() => {
+  if (jornadaInhabilitada.value) {
+    return { Presente: 0, Tardanza: 0, Falta: 0, Excusada: 0, Inhabilitada: estudiantesFicha.value.length }
+  }
   const conteo = { Presente: 0, Tardanza: 0, Falta: 0, Excusada: 0 }
   for (const est of estudiantesFicha.value) {
     const reg = asistenciaDia.value[est._id]
@@ -684,7 +773,7 @@ function exportarAsistenciaDia() {
   const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   const data = estudiantesFicha.value.map(est => {
     const reg = asistenciaDia.value[est._id]
-    const estadoStr = reg ? (reg.excusa ? 'Excusada' : reg.estado) : 'Sin registro'
+    const estadoStr = jornadaInhabilitada.value ? 'Inhabilitada' : (reg ? (reg.excusa ? 'Excusada' : reg.estado) : 'Sin registro')
     let tardanzaStr = '0 horas'
     if (estadoStr === 'Tardanza') {
       tardanzaStr = reg?.tiempoTardanza || calcularHorasTardanza(reg?.horaMarcacion, jornadaFicha).texto
@@ -694,10 +783,11 @@ function exportarAsistenciaDia() {
       'Tipo Doc.': est.tipoDocumento,
       'Documento': est.numeroDocumento,
       'Estado': estadoStr,
-      'Hora Marcación': reg?.horaMarcacion || '—',
+      'Hora Marcación': jornadaInhabilitada.value ? '—' : (reg?.horaMarcacion || '—'),
       'Tiempo de Tardanza': tardanzaStr,
       'Excusa': reg?.excusa ? 'Sí' : 'No',
       'Fecha': hoy,
+      'Observación / Motivo': jornadaInhabilitada.value ? motivoInhabilitacionDia.value : ''
     }
   })
   descargarExcel(data, `Asistencia_${fichaSeleccionada.value.codigoFicha}_${hoy}`)
@@ -706,7 +796,9 @@ function exportarAsistenciaDia() {
 function exportarHistorial() {
   const jornadaFicha = fichaSeleccionada.value?.jornada || 'Mañana'
   const data = asistenciasFicha.value.map(asis => {
-    const est = estudiantesFicha.value.find(e => e._id === asis.estudianteId)
+    const est = estudiantesFicha.value.find(e => String(e._id) === String(asis.estudianteId?._id || asis.estudianteId))
+    const nombreEst = est ? `${est.nombres} ${est.apellidos}` : (asis.estudianteId?.nombres ? `${asis.estudianteId.nombres} ${asis.estudianteId.apellidos}` : 'Aprendiz')
+    const docEst = est ? est.numeroDocumento : (asis.estudianteId?.numeroDocumento || '')
     let tardanzaStr = '0 horas'
     if (asis.estado === 'Tardanza') {
       tardanzaStr = asis.tiempoTardanza || calcularHorasTardanza(asis.hora, jornadaFicha).texto
@@ -714,10 +806,11 @@ function exportarHistorial() {
     return {
       'Fecha': asis.fecha,
       'Hora': asis.hora || '—',
-      'Aprendiz': est ? `${est.nombres} ${est.apellidos}` : asis.estudianteId,
-      'Documento': est ? est.numeroDocumento : '',
+      'Aprendiz': nombreEst,
+      'Documento': docEst,
       'Estado': asis.estado,
       'Tiempo de Tardanza': tardanzaStr,
+      'Motivo Inhabilitación': asis.motivoInhabilitacion || '—',
     }
   })
   descargarExcel(data, `Historial_${fichaSeleccionada.value.codigoFicha}`)
@@ -889,24 +982,101 @@ function descargarExcel(data, nombreArchivo) {
         </div>
 
         <!-- ========================================= -->
-        <!-- VISTA 1: TOMAR ASISTENCIA (REDISEÑADA)    -->
+        <!-- VISTA 1: TOMAR ASISTENCIA (POR DÍAS)      -->
         <!-- ========================================= -->
         <div v-if="vistaFicha === 'asistencia'" class="section-body">
-          <div class="section-header-row">
+          <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
               <h4>Tomar Asistencia</h4>
-              <p class="section-desc">Selecciona el estado de cada aprendiz o usa el lector de huellas.</p>
+              <p class="section-desc">Control biométrico y manual por jornada para la Ficha {{ fichaSeleccionada.codigoFicha }}.</p>
             </div>
+            
+            <!-- Controles de Navegación por Días e Inhabilitación -->
             <div class="section-header-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-              <label class="fecha-label">
-                Fecha:
-                <input type="date" v-model="fechaAsistencia" @change="inicializarAsistenciaDia" class="input-fecha" />
-              </label>
+              <div class="day-nav-bar" style="display: inline-flex; align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 3px 6px;">
+                <button
+                  type="button"
+                  class="btn-nav-day"
+                  @click="cambiarFechaDia(-1)"
+                  title="Día Anterior"
+                  style="background: transparent; border: none; font-size: 13px; font-weight: 700; color: #475569; padding: 5px 8px; cursor: pointer; border-radius: 4px;"
+                >
+                  ◀
+                </button>
+                <input
+                  type="date"
+                  v-model="fechaAsistencia"
+                  @change="inicializarAsistenciaDia"
+                  class="input-fecha"
+                  style="border: none; background: transparent; font-weight: 600; font-size: 13px; color: #1e293b; padding: 4px 6px; outline: none;"
+                />
+                <button
+                  type="button"
+                  class="btn-nav-day"
+                  @click="cambiarFechaDia(1)"
+                  title="Día Siguiente"
+                  style="background: transparent; border: none; font-size: 13px; font-weight: 700; color: #475569; padding: 5px 8px; cursor: pointer; border-radius: 4px;"
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  class="btn-today"
+                  @click="irAHoy"
+                  title="Ir al día de hoy"
+                  style="background: #e2e8f0; border: none; font-size: 11px; font-weight: 700; color: #334155; padding: 4px 8px; margin-left: 4px; border-radius: 4px; cursor: pointer;"
+                >
+                  Hoy
+                </button>
+              </div>
+
+              <!-- Botón Inhabilitar / Reactivar -->
+              <button
+                v-if="!jornadaInhabilitada"
+                type="button"
+                class="btn-inhabilitar-action"
+                @click="abrirModalInhabilitar"
+                title="Inhabilitar la toma de asistencia para esta jornada"
+                style="background: #fff1f2; border: 1.5px solid #fecdd3; color: #e11d48; font-weight: 600; padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+              >
+                🚫 Inhabilitar Sesión
+              </button>
+              <button
+                v-else
+                type="button"
+                class="btn-reactivar-action"
+                @click="reactivarJornada"
+                :disabled="inhabilitando"
+                title="Reactivar la jornada para tomar asistencia"
+                style="background: #f0fdf4; border: 1.5px solid #bbf7d0; color: #16a34a; font-weight: 700; padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
+              >
+                🟢 {{ inhabilitando ? '⏳ Reactivando...' : '🟢 Reactivar Sesión' }}
+              </button>
             </div>
           </div>
 
-          <!-- Panel de verificación biométrica activa -->
-          <div v-if="verificandoHuella" class="biometric-panel">
+          <!-- Banner destacado si la jornada está inhabilitada -->
+          <div v-if="jornadaInhabilitada" style="background: #fff7ed; border: 1.5px solid #fdba74; color: #9a3412; padding: 14px 18px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px;">
+                🚫 Sesión Inhabilitada para el {{ fechaAsistencia }}
+              </div>
+              <div style="font-size: 13px; color: #c2410c; margin-top: 3px;">
+                Motivo: <strong>{{ motivoInhabilitacionDia }}</strong> — Los aprendices no registran fallas injustificadas en esta fecha.
+              </div>
+            </div>
+            <button
+              class="btn btn-sm btn-success"
+              @click="reactivarJornada"
+              :disabled="inhabilitando"
+              style="padding: 6px 14px; font-size: 12px; font-weight: 700;"
+            >
+              🟢 Reactivar Sesión
+            </button>
+          </div>
+
+          <!-- Panel de verificación biométrica activa (Solo si la sesión no está inhabilitada) -->
+          <div v-if="verificandoHuella && !jornadaInhabilitada" class="biometric-panel">
             <div class="biometric-pulse-icon">☝️</div>
             <div class="biometric-panel-text">
               <strong>Lector biométrico activo</strong>
@@ -924,13 +1094,18 @@ function descargarExcel(data, nombreArchivo) {
 
           <!-- Contadores rápidos -->
           <div class="conteo-row">
-            <div class="conteo-chip conteo-presente">✅ Presentes: {{ conteoAsistencia.Presente }}</div>
-            <div class="conteo-chip conteo-tardanza">⏰ Tardanza: {{ conteoAsistencia.Tardanza }}</div>
-            <div class="conteo-chip conteo-falta">❌ Falta: {{ conteoAsistencia.Falta }}</div>
-            <div class="conteo-chip conteo-excusada">📋 Excusada: {{ conteoAsistencia.Excusada }}</div>
+            <div v-if="jornadaInhabilitada" class="conteo-chip" style="background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; font-weight: 700;">
+              🚫 Sesión Inhabilitada ({{ conteoAsistencia.Inhabilitada }} aprendices sin penalización)
+            </div>
+            <template v-else>
+              <div class="conteo-chip conteo-presente">✅ Presentes: {{ conteoAsistencia.Presente }}</div>
+              <div class="conteo-chip conteo-tardanza">⏰ Tardanza: {{ conteoAsistencia.Tardanza }}</div>
+              <div class="conteo-chip conteo-falta">❌ Falta: {{ conteoAsistencia.Falta }}</div>
+              <div class="conteo-chip conteo-excusada">📋 Excusada: {{ conteoAsistencia.Excusada }}</div>
+            </template>
           </div>
 
-          <div class="info-alert-bar" style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px;">
+          <div v-if="!jornadaInhabilitada" class="info-alert-bar" style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px;">
             ⏰ <strong>Cálculo Automático de Tardanza:</strong> Al marcar a un aprendiz como <strong>Presente</strong>, se captura la hora exacta. Si supera los 15 minutos de inicio de jornada ({{ fichaSeleccionada.jornada }}), se asignará automáticamente como <strong>Tardanza</strong>. Quienes queden sin marcar se registrarán como <strong>Falta</strong> al finalizar la jornada.
           </div>
 
@@ -947,7 +1122,7 @@ function descargarExcel(data, nombreArchivo) {
             </thead>
             <tbody>
               <tr v-for="est in estudiantesFicha" :key="est._id"
-                  :class="{ 'row-excusada': asistenciaDia[est._id]?.excusa }">
+                  :class="{ 'row-excusada': asistenciaDia[est._id]?.excusa, 'row-disabled': jornadaInhabilitada }">
                 <td><strong>{{ est.nombres }} {{ est.apellidos }}</strong></td>
                 <td>{{ est.tipoDocumento }} {{ est.numeroDocumento }}</td>
                 <td class="td-radio">
@@ -955,7 +1130,7 @@ function descargarExcel(data, nombreArchivo) {
                     <input
                       type="checkbox"
                       :checked="asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza'"
-                      :disabled="asistenciaDia[est._id]?.excusa"
+                      :disabled="asistenciaDia[est._id]?.excusa || jornadaInhabilitada"
                       @change="marcarPresente(est._id)"
                     />
                     <span class="checkbox-custom radio-presente"></span>
@@ -966,16 +1141,20 @@ function descargarExcel(data, nombreArchivo) {
                     <input
                       type="checkbox"
                       :checked="asistenciaDia[est._id]?.excusa"
+                      :disabled="jornadaInhabilitada"
                       @change="toggleExcusa(est._id)"
                     />
                     <span class="checkbox-custom"></span>
                   </label>
                 </td>
                 <td style="font-size: 12px; font-weight: 600; color: #475569;">
-                  {{ asistenciaDia[est._id]?.horaMarcacion || '—' }}
+                  {{ jornadaInhabilitada ? '—' : (asistenciaDia[est._id]?.horaMarcacion || '—') }}
                 </td>
                 <td>
-                  <span v-if="asistenciaDia[est._id]?.excusa" class="badge badge-warning">
+                  <span v-if="jornadaInhabilitada" class="badge" style="background: #fed7aa; color: #9a3412; font-weight: 700;">
+                    🚫 Inhabilitada
+                  </span>
+                  <span v-else-if="asistenciaDia[est._id]?.excusa" class="badge badge-warning">
                     📋 Excusada
                   </span>
                   <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge badge-success">
@@ -999,7 +1178,12 @@ function descargarExcel(data, nombreArchivo) {
             <button class="btn-export" @click="exportarAsistenciaDia" title="Exportar lista del día a Excel">
               📥 Exportar Excel
             </button>
-            <button class="btn btn-primary btn-guardar" @click="guardarAsistenciaDia" :disabled="guardandoAsistencia">
+            <button
+              v-if="!jornadaInhabilitada"
+              class="btn btn-primary btn-guardar"
+              @click="guardarAsistenciaDia"
+              :disabled="guardandoAsistencia"
+            >
               {{ guardandoAsistencia ? '⏳ Finalizando Jornada...' : '🔒 Finalizar Jornada y Guardar' }}
             </button>
           </div>
@@ -1372,8 +1556,65 @@ function descargarExcel(data, nombreArchivo) {
         </div>
       </div>
     </div>
+    <!-- ========================================= -->
+    <!-- MODAL INHABILITAR JORNADA                 -->
+    <!-- ========================================= -->
+    <div v-if="showInhabilitarModal" class="modal-overlay" @click.self="showInhabilitarModal = false">
+      <div class="modal" style="max-width: 480px; text-align: left;">
+        <h3 style="display: flex; align-items: center; gap: 8px; color: #9a3412;">
+          🚫 Inhabilitar Sesión del Día
+        </h3>
+        <p style="color: #64748b; font-size: 13px; margin-bottom: 14px;">
+          Ficha: <strong>{{ fichaSeleccionada.codigoFicha }}</strong> — {{ fichaSeleccionada.nombrePrograma }}<br>
+          Fecha: <strong>{{ fechaAsistencia }}</strong> | Jornada: <strong>{{ fichaSeleccionada.jornada }}</strong>
+        </p>
 
+        <div style="background: #fff7ed; border: 1px solid #fed7aa; padding: 12px; border-radius: 8px; font-size: 12.5px; color: #c2410c; margin-bottom: 16px;">
+          ℹ️ Al inhabilitar la jornada, la sesión se guardará como suspendida y los aprendices <strong>no recibirán fallas injustificadas</strong> en esta fecha.
+        </div>
 
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px; display: block;">
+            Motivo de inhabilitación:
+          </label>
+          <select v-model="motivoInhabilitar" class="form-input" style="width: 100%; padding: 8px 12px; font-size: 13px;">
+            <option value="Reunión institucional / Actividad SENA">Reunión institucional / Actividad SENA</option>
+            <option value="Permiso o incapacidad del instructor">Permiso o incapacidad del instructor</option>
+            <option value="Salida pedagógica o práctica externa">Salida pedagógica o práctica externa</option>
+            <option value="Falla técnica o de fluido eléctrico">Falla técnica o de fluido eléctrico</option>
+            <option value="Día no lectivo / Festivo regional">Día no lectivo / Festivo regional</option>
+            <option value="Otro">Otro motivo personalizado...</option>
+          </select>
+        </div>
+
+        <div v-if="motivoInhabilitar === 'Otro'" class="form-group" style="margin-bottom: 18px;">
+          <label style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 6px; display: block;">
+            Describe el motivo:
+          </label>
+          <input
+            v-model="motivoInhabilitarOtro"
+            type="text"
+            class="form-input"
+            placeholder="Ej: Mantenimiento de ambientes de aprendizaje..."
+            style="width: 100%; padding: 8px 12px; font-size: 13px;"
+          />
+        </div>
+
+        <div class="modal-actions" style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+          <button class="btn btn-outline" @click="showInhabilitarModal = false" :disabled="inhabilitando">
+            Cancelar
+          </button>
+          <button
+            class="btn btn-danger-solid"
+            @click="confirmarInhabilitarJornada"
+            :disabled="inhabilitando"
+            style="background: #e11d48; color: #ffffff; border: none; font-weight: 700; padding: 9px 16px; border-radius: 8px; cursor: pointer;"
+          >
+            {{ inhabilitando ? '⏳ Inhabilitando...' : '🚫 Inhabilitar Sesión' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
   </div>
 </template>
