@@ -1,5 +1,13 @@
 import koffi from 'koffi'
 import { PNG } from 'pngjs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const dllFolder = path.resolve(__dirname, '../dll')
+
+// Agregar la carpeta ./dll al PATH del proceso de Windows para que se encuentren las dependencias secundarias (dpfpdd.dll)
+process.env.PATH = `${dllFolder};${process.env.PATH}`
 
 const DPFJ_SUCCESS = 0
 const DPFJ_E_MORE_DATA = 0x05BA000D
@@ -14,9 +22,17 @@ let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2
 const MATCH_THRESHOLD = 0x3FFFFFFF
 
 let dpfj = null
+
+// Pre-cargar dpfpdd.dll si existe en ./dll para resolver dependencias
+try {
+  koffi.load(path.join(dllFolder, 'dpfpdd.dll'))
+} catch (_) {}
+
 const searchPaths = [
+  path.join(dllFolder, 'dpfj.dll'),
   './dll/dpfj.dll',
   'dpfj.dll',
+  'C:/Windows/System32/dpfj.dll',
   'C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll',
   'C:/Program Files (x86)/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll',
 ]
@@ -27,24 +43,12 @@ for (const p of searchPaths) {
     console.log(`[fingerprint] dpfj.dll cargado exitosamente desde: ${p}`)
     break
   } catch (err) {
-    // Intentar siguiente ruta
+    console.log(`[fingerprint] No se pudo cargar desde ${p}: ${err.message}`)
   }
 }
 
 if (!dpfj) {
-  console.error('[fingerprint] ❌ No se pudo cargar dpfj.dll de ninguna ubicación. Verifique los drivers de DigitalPersona.')
-}
-
-try {
-  dpfj = koffi.load('dpfj.dll')
-  console.log('[fingerprint] dpfj.dll cargado desde PATH del sistema')
-} catch (e) {
-  try {
-    dpfj = koffi.load('C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfj.dll')
-    console.log('[fingerprint] dpfj.dll cargado desde SDK x64')
-  } catch (e2) {
-    console.error('[fingerprint] No se pudo cargar dpfj.dll:', e.message)
-  }
+  console.error('[fingerprint] ❌ No se pudo cargar dpfj.dll de ninguna ubicación. Asegúrese de tener instalado el driver/SDK de DigitalPersona y Visual C++ Redistributable x64.')
 }
 
 let dpfj_start_enrollment, dpfj_add_to_enrollment, dpfj_create_enrollment_fmd
