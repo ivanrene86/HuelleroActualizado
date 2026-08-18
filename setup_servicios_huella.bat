@@ -27,9 +27,9 @@ if not exist "C:\Program Files (x86)\DigitalPersona\Bin" (
 
 :: 3. Copiar ejecutables locales si existen en el repositorio
 set "SCRIPT_DIR=%~dp0"
-if exist "%SCRIPT_DIR%server\dll\dpfj.dll" (
+if exist "%SCRIPT_DIR%backend\dll\dpfj.dll" (
     echo [1/4] Copiando librerias biométricas locales...
-    copy /Y "%SCRIPT_DIR%server\dll\*.dll" "C:\Windows\System32\" >nul 2>&1
+    copy /Y "%SCRIPT_DIR%backend\dll\*.dll" "C:\Windows\System32\" >nul 2>&1
 )
 
 :: 4. Configurar e Iniciar Servicio DpHost

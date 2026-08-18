@@ -34,7 +34,7 @@ const views = {
   fichas: { component: Fichas, label: 'Fichas', roles: ['Administrador'] },
   importar: { component: ImportarUsuarios, label: 'Importar / Carga Masiva', roles: ['Administrador', 'Instructor'] },
   reportes: { component: Reportes, label: 'Reportes', roles: ['Administrador', 'Instructor'] },
-  diasFestivos: { component: DiasFestivos, label: 'Días Festivos', roles: ['Administrador'] },
+  diasFestivos: { component: DiasFestivos, label: 'Días Inavilitados', roles: ['Administrador'] },
 }
 
 const viewsDisponibles = computed(() => {

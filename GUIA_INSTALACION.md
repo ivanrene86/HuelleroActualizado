@@ -4,6 +4,31 @@ Esta guía explica los pasos necesarios para desplegar y poner a funcionar el si
 
 ---
 
+## 📁 Estructura del Proyecto
+
+El proyecto está organizado en dos módulos independientes:
+
+```text
+HuelleroActualizado/
+├── backend/                  # Servidor API Node.js, Express, MongoDB y motor biométrico C++
+│   ├── dll/                  # Librerías DLL nativas (dpfj.dll, dpfpdd.dll)
+│   ├── models/               # Modelos de base de datos
+│   ├── routes/               # Rutas API REST (/api/...)
+│   ├── services/             # Lógica biométrica y de correo
+│   └── package.json          # Dependencias del servidor
+│
+├── frontend/                 # Interfaz de usuario (Vue 3, Vite, Tailwind/CSS)
+│   ├── public/               # Scripts Web SDK DigitalPersona
+│   ├── src/                  # Componentes y vistas de usuario
+│   └── package.json          # Dependencias de la interfaz
+│
+├── package.json              # Scripts raíz para iniciar o instalar ambos
+├── setup_servicios_huella.bat# Configurador automático de servicios de huella
+└── setup_huellas.bat         # Instalador y verificador de dependencias
+```
+
+---
+
 ## 📋 Requisitos Previos Generales
 
 1. **Hardware:** Lector de Huella Biométrica **DigitalPersona U.are.U 4500 USB**.
@@ -15,16 +40,17 @@ Esta guía explica los pasos necesarios para desplegar y poner a funcionar el si
 
 ## 1. 🔌 Instalación en la Computadora Cliente (Donde se conecta el Lector USB)
 
-Para que el navegador web (Vite/Vue) pueda comunicarse con el sensor biométrico USB, la máquina cliente requiere instalar el servicio de fondo y los drivers de DigitalPersona:
+Para que el navegador web pueda comunicarse con el sensor biométrico USB, la máquina cliente requiere instalar el servicio de fondo y los drivers de DigitalPersona:
 
 ### Pasos:
-1. **Instalar DigitalPersona Web SDK Agent (`DPAgent`):**
-   - Ejecutar el instalador **`DigitalPersona Web Components`** (o `DigitalPersona Lite Client / WebAgent`).
-   - Esto instalará el servicio en segundo plano que escucha en `http://localhost:9001` / `https://localhost:9003` para WebSocket/WebChannel.
-2. **Verificación:**
-   - Conectar el lector USB U.are.U 4500.
-   - Verificar en el Administrador de Dispositivos de Windows que aparezca bajo **Biometric Devices** o **DigitalPersona Fingerprint Reader**.
-   - El icono en la barra de tareas de Windows debe mostrar `DigitalPersona Agent` activo.
+1. **Configuración Rápida Automática:**
+   - Haz clic derecho sobre **`setup_servicios_huella.bat`** en la raíz del proyecto y selecciona **"Ejecutar como Administrador"**.
+   - El script creará las carpetas del sistema, configurará el servicio `DpHost` e iniciará `DPAgent.exe`.
+
+2. **Instalación Manual (Si es una máquina nueva sin drivers):**
+   - Ejecuta el instalador **`DigitalPersona Web Components`** (o `DigitalPersona Lite Client / WebAgent`).
+   - Conecta el lector USB U.are.U 4500.
+   - Verifica en el Administrador de Dispositivos que aparezca bajo **Dispositivos biométricos** -> **DigitalPersona Fingerprint Reader**.
 
 ---
 
@@ -33,36 +59,34 @@ Para que el navegador web (Vite/Vue) pueda comunicarse con el sensor biométrico
 El backend utiliza la librería nativa de extracción y comparación de minucias **`dpfj.dll`** a través de `koffi`.
 
 ### Pasos:
-1. **Carpeta de Librerías DLL (`server/dll/`):**
-   - El backend busca automáticamente `dpfj.dll` y `dpfpdd.dll` en las siguientes ubicaciones (en este orden de prioridad):
-     1. `server/dll/dpfj.dll` *(recomendado incluirlo en la carpeta del proyecto)*
-     2. `C:\Windows\System32\dpfj.dll` *(PATH del sistema)*
-     3. `C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\x64\dpfj.dll`
-
-2. **Copiar las DLLs al Proyecto (Opcional pero recomendado para distribución):**
-   - Copiar los archivos `dpfj.dll` y `dpfpdd.dll` desde `C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\x64\` hacia la carpeta `server/dll/` del proyecto.
-   - De esta forma, el backend funcionará en cualquier máquina sin necesidad de instalar el SDK completo de desarrollo de DigitalPersona.
-
-3. **Iniciar el Servidor Backend:**
+1. **Iniciar el Servidor Backend:**
    ```powershell
-   cd server
+   cd backend
    npm install
-   npm start
+   npm run dev
    ```
+2. **Verificación:**
+   - Debe mostrar:
+     ```text
+     [fingerprint] dpfj.dll cargado exitosamente desde: .../backend/dll/dpfj.dll
+     MongoDB Atlas conectado
+     Backend en http://localhost:3000
+     ```
 
 ---
 
 ## 3. 🌐 Configuración del Frontend (Vue 3 / Vite)
 
-Los scripts del SDK Web de DigitalPersona ya vienen pre-incluidos en la carpeta `public/scripts/` del proyecto:
-- `public/scripts/websdk.client.bundle.min.js`
-- `public/scripts/fingerprint.sdk.min.js`
+Los scripts del SDK Web de DigitalPersona vienen pre-incluidos en la carpeta `frontend/public/scripts/`.
 
-Son cargados en `index.html` mediante:
-```html
-<script src="/scripts/websdk.client.bundle.min.js"></script>
-<script src="/scripts/fingerprint.sdk.min.js"></script>
-```
+### Pasos:
+1. **Iniciar la Interfaz Frontend:**
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
+2. Abre en tu navegador: `http://localhost:5173`.
 
 ---
 
@@ -70,8 +94,8 @@ Son cargados en `index.html` mediante:
 
 | Componente | ¿Qué instalar? | Ubicación / Archivo |
 | :--- | :--- | :--- |
-| **Cliente USB** | Driver + DigitalPersona WebAgent | Instalador `.exe` de DigitalPersona Web Components |
-| **Backend Node.js** | DLLs de Biometría | `server/dll/dpfj.dll` o `C:\Windows\System32\dpfj.dll` |
-| **Frontend** | Scripts Web SDK | Pre-incluidos en `public/scripts/` |
+| **Cliente USB** | Driver + DigitalPersona WebAgent | `setup_servicios_huella.bat` o instalador `.exe` |
+| **Backend Node.js** | DLLs de Biometría | `backend/dll/dpfj.dll` |
+| **Frontend** | Scripts Web SDK | Pre-incluidos en `frontend/public/scripts/` |
 
 ---
