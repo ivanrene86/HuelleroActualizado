@@ -20,7 +20,7 @@ const todosEstudiantes = ref([])
 const todasAsistencias = ref([])
 
 onMounted(async () => {
-  await Promise.all([loadFichas(), loadEstudiantes(), loadAsistencias()])
+  await Promise.all([loadFichas(), loadEstudiantes(), loadAsistencias(), loadDiasFestivos()])
 })
 
 async function loadFichas() { try { fichasList.value = await api.fichas.getAll() } catch (e) {} }
@@ -135,9 +135,20 @@ async function loadDiasFestivos() {
 }
 
 function esDiaFestivo(fecha, fichaId) {
+  if (fecha) {
+    const [y, m, d] = fecha.split('-').map(Number)
+    const dt = new Date(y, m - 1, d, 12, 0, 0)
+    if (dt.getDay() === 0) {
+      return { motivo: 'Domingo', descripcion: 'Día no laboral' }
+    }
+  }
   return diasFestivosCache.value.find(d => {
     if (d.fecha !== fecha) return false
-    if (d.fichasAplicables === 'todas') return true
+    if (!d.fichasAplicables || d.fichasAplicables === 'todas') return true
+    if (d.fichasAplicables === 'jornada') {
+      const f = fichasList.value.find(fi => fi._id === fichaId)
+      return f && Array.isArray(d.jornadasSeleccionadas) && d.jornadasSeleccionadas.includes(f.jornada)
+    }
     return d.fichasSeleccionadas && d.fichasSeleccionadas.some(s => s === fichaId || s._id === fichaId)
   }) || null
 }

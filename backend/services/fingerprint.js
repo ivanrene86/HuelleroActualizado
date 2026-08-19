@@ -351,3 +351,47 @@ export function verifyFingerprint(imageBase64, enrolledStudents) {
 
   return { match: false, bestScore: bestScore !== 0xFFFFFFFF ? bestScore : null }
 }
+
+export function checkDuplicateFingerprint(newTemplateBase64, enrolledStudents, currentStudentId) {
+  if (!newTemplateBase64 || !enrolledStudents || enrolledStudents.length === 0) {
+    return { isDuplicate: false }
+  }
+
+  let newTemplateBytes
+  try {
+    newTemplateBytes = bufFromBase64(newTemplateBase64)
+  } catch (e) {
+    return { isDuplicate: false }
+  }
+
+  for (const student of enrolledStudents) {
+    if (String(student._id) === String(currentStudentId)) continue
+    if (!student.huellaTemplate) continue
+
+    let existingBytes
+    try {
+      existingBytes = bufFromBase64(student.huellaTemplate)
+    } catch (e) {
+      continue
+    }
+
+    const { ok, score } = compareFmds(newTemplateBytes, existingBytes)
+    if (ok && score <= MATCH_THRESHOLD) {
+      console.log(`[fingerprint] ⚠️ DUPLICADO: Huella coincide con ${student.nombres} ${student.apellidos} (score=${score})`)
+      return {
+        isDuplicate: true,
+        student: {
+          id: student._id,
+          nombres: student.nombres,
+          apellidos: student.apellidos,
+          tipoDocumento: student.tipoDocumento,
+          numeroDocumento: student.numeroDocumento,
+        },
+        score
+      }
+    }
+  }
+
+  return { isDuplicate: false }
+}
+

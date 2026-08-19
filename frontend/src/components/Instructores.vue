@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import api from '../services/api.js'
 
 const toast = ref({ show: false, message: '', type: '' })
@@ -9,6 +9,15 @@ const editingId = ref(null)
 const inhabilitarTarget = ref(null)
 const inhabilitarMotivo = ref('')
 const loading = ref(false)
+const busquedaAvanzadaAbierta = ref(true)
+
+const busqueda = reactive({
+  documento: '',
+  nombres: '',
+  estado: 'Todos',
+  tipoDocente: 'Todos',
+  especialidad: ''
+})
 
 const instructorForm = reactive({
   nombres: '',
@@ -29,6 +38,60 @@ async function loadInstructores() {
     showToastFn('Error al cargar instructores', 'error')
   }
 }
+
+const activosCount = computed(() => instructores.value.filter(i => i.estado === 'Activo').length)
+const inactivosCount = computed(() => instructores.value.filter(i => i.estado === 'Inactivo').length)
+const lideresCount = computed(() => instructores.value.filter(i => i.esLider).length)
+
+const especialidadesDisponibles = computed(() => {
+  return [...new Set(instructores.value.map(i => i.especialidad).filter(Boolean))].sort()
+})
+
+const criteriosActivos = computed(() => {
+  let count = 0
+  if (busqueda.documento.trim()) count++
+  if (busqueda.nombres.trim()) count++
+  if (busqueda.estado !== 'Todos') count++
+  if (busqueda.tipoDocente !== 'Todos') count++
+  if (busqueda.especialidad) count++
+  return count
+})
+
+function limpiarBusqueda() {
+  Object.assign(busqueda, {
+    documento: '',
+    nombres: '',
+    estado: 'Todos',
+    tipoDocente: 'Todos',
+    especialidad: ''
+  })
+}
+
+const instructoresFiltrados = computed(() => {
+  let lista = instructores.value
+  if (busqueda.estado !== 'Todos') {
+    lista = lista.filter(i => i.estado === busqueda.estado)
+  }
+  if (busqueda.tipoDocente !== 'Todos') {
+    if (busqueda.tipoDocente === 'Lider') lista = lista.filter(i => i.esLider)
+    if (busqueda.tipoDocente === 'Comun') lista = lista.filter(i => !i.esLider)
+  }
+  if (busqueda.especialidad) {
+    lista = lista.filter(i => (i.especialidad || '').toLowerCase() === busqueda.especialidad.toLowerCase())
+  }
+  if (busqueda.documento.trim()) {
+    const doc = busqueda.documento.toLowerCase().trim()
+    lista = lista.filter(i => (i.numeroDocumento || '').toLowerCase().includes(doc))
+  }
+  if (busqueda.nombres.trim()) {
+    const nom = busqueda.nombres.toLowerCase().trim()
+    lista = lista.filter(i => {
+      const completo = `${i.nombres || ''} ${i.apellidos || ''}`.toLowerCase()
+      return completo.includes(nom)
+    })
+  }
+  return lista
+})
 
 function showToastFn(message, type = 'success') {
   toast.value = { show: true, message, type }
@@ -129,12 +192,117 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
 <template>
   <div class="page-header">
     <h1>Instructores</h1>
-    <p>Gestiona los instructores y docentes del sistema</p>
+    <p>Gestiona los instructores y docentes del sistema institucional</p>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card stat-activo">
+      <span class="stat-num">{{ instructores.length }}</span>
+      <span class="stat-label">Total Instructores</span>
+    </div>
+    <div class="stat-card stat-activo">
+      <span class="stat-num">{{ activosCount }}</span>
+      <span class="stat-label">Activos</span>
+    </div>
+    <div class="stat-card stat-inactivo">
+      <span class="stat-num">{{ inactivosCount }}</span>
+      <span class="stat-label">Inactivos</span>
+    </div>
+    <div class="stat-card" style="border-left: 4px solid #3b82f6;">
+      <span class="stat-num">{{ lideresCount }}</span>
+      <span class="stat-label">Docentes Líderes</span>
+    </div>
+  </div>
+
+  <div class="card busqueda-card">
+    <div class="card-header busqueda-header">
+      <div class="header-title-group">
+        <h3>Búsqueda y Filtros</h3>
+        <span v-if="criteriosActivos > 0" class="badge-filtros-activos">
+          {{ criteriosActivos }} filtro(s) activo(s)
+        </span>
+      </div>
+      <div class="btn-group">
+        <button v-if="criteriosActivos > 0" class="btn btn-outline btn-sm btn-limpiar" @click="limpiarBusqueda">
+          Limpiar filtros
+        </button>
+        <button class="btn btn-outline btn-sm" @click="busquedaAvanzadaAbierta = !busquedaAvanzadaAbierta">
+          {{ busquedaAvanzadaAbierta ? 'Ocultar' : 'Mostrar' }} filtros
+        </button>
+      </div>
+    </div>
+
+    <div v-if="busquedaAvanzadaAbierta" class="busqueda-body">
+      <!-- Fila 1: Búsqueda por texto (Documento y Nombres) -->
+      <div class="busqueda-fila busqueda-fila-textos">
+        <div class="campo-busqueda">
+          <label for="buscar-doc">Documento de Identidad</label>
+          <div class="input-con-clear">
+            <input
+              id="buscar-doc"
+              v-model="busqueda.documento"
+              type="text"
+              placeholder="Buscar por número de documento..."
+              class="input-control"
+            />
+            <button v-if="busqueda.documento" class="btn-clear-campo" @click="busqueda.documento = ''" title="Borrar">×</button>
+          </div>
+        </div>
+
+        <div class="campo-busqueda">
+          <label for="buscar-nom">Nombre o Apellido</label>
+          <div class="input-con-clear">
+            <input
+              id="buscar-nom"
+              v-model="busqueda.nombres"
+              type="text"
+              placeholder="Buscar por nombres o apellidos..."
+              class="input-control"
+            />
+            <button v-if="busqueda.nombres" class="btn-clear-campo" @click="busqueda.nombres = ''" title="Borrar">×</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fila 2: Filtros Selectores (Estado, Tipo, Especialidad) -->
+      <div class="busqueda-fila busqueda-fila-selects">
+        <div class="campo-busqueda">
+          <label for="filtro-estado">Estado del Docente</label>
+          <select id="filtro-estado" v-model="busqueda.estado" class="select-control">
+            <option value="Todos">Todos los estados</option>
+            <option value="Activo">Activo</option>
+            <option value="Inactivo">Inactivo</option>
+          </select>
+        </div>
+
+        <div class="campo-busqueda">
+          <label for="filtro-tipo">Rol en Ficha</label>
+          <select id="filtro-tipo" v-model="busqueda.tipoDocente" class="select-control">
+            <option value="Todos">Todos los roles</option>
+            <option value="Lider">Instructor Líder</option>
+            <option value="Comun">Instructor Común</option>
+          </select>
+        </div>
+
+        <div class="campo-busqueda">
+          <label for="filtro-esp">Especialidad Técnica</label>
+          <select id="filtro-esp" v-model="busqueda.especialidad" class="select-control">
+            <option value="">Todas las especialidades</option>
+            <option v-for="esp in especialidadesDisponibles" :key="esp" :value="esp">{{ esp }}</option>
+          </select>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-header">
-      <h3>Listado de Instructores</h3>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <h3>Listado de Instructores</h3>
+        <span v-if="criteriosActivos > 0" class="badge badge-primary">
+          {{ instructoresFiltrados.length }} de {{ instructores.length }} resultado(s)
+        </span>
+      </div>
       <button class="btn btn-primary" @click="openCreate">+ Nuevo Instructor</button>
     </div>
 
@@ -145,7 +313,14 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
         <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
         <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
       </svg>
-      <p>No hay instructores registrados. Crea el primero usando el boton "Nuevo Instructor".</p>
+      <p>No hay instructores registrados. Crea el primero usando el botón "Nuevo Instructor".</p>
+    </div>
+
+    <div v-else-if="instructoresFiltrados.length === 0" class="empty-state" style="padding: 32px 16px;">
+      <p style="font-size: 15px; color: #64748b; margin-bottom: 12px;">
+        No se encontraron instructores que coincidan con los criterios de búsqueda.
+      </p>
+      <button class="btn btn-outline btn-sm" @click="limpiarBusqueda">Limpiar Filtros</button>
     </div>
 
     <div v-else class="table-container">
@@ -155,7 +330,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
             <th>Nombre</th>
             <th>Documento</th>
             <th>Correo</th>
-            <th>Telefono</th>
+            <th>Teléfono</th>
             <th>Especialidad</th>
             <th>Tipo Docente</th>
             <th>Estado</th>
@@ -163,7 +338,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
           </tr>
         </thead>
         <tbody>
-          <tr v-for="i in instructores" :key="i._id" :class="{ 'fila-inactivo': i.estado === 'Inactivo' }">
+          <tr v-for="i in instructoresFiltrados" :key="i._id" :class="{ 'fila-inactivo': i.estado === 'Inactivo' }">
             <td><strong>{{ nombreCompleto(i) }}</strong></td>
             <td><span class="badge badge-primary">{{ i.tipoDocumento }}</span> {{ i.numeroDocumento }}</td>
             <td>{{ i.correo }}</td>
@@ -171,7 +346,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
             <td><span class="badge badge-success">{{ i.especialidad }}</span></td>
             <td>
               <span class="badge" :class="i.esLider ? 'badge-primary' : 'badge-neutral'" style="font-size: 12px; font-weight: 600;">
-                {{ i.esLider ? ' Instructor Líder' : ' Instructor Común' }}
+                {{ i.esLider ? 'Instructor Líder' : 'Instructor Común' }}
               </span>
             </td>
             <td>
@@ -230,7 +405,7 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
         <div class="form-group"><label>Especialidad</label><input v-model="instructorForm.especialidad" type="text" placeholder="Ej: Desarrollo de Software" /></div>
       </div>
       <div v-if="!editingId" style="margin-top: 16px; padding: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12.5px; color: #1e40af;">
-        🔑 <strong>Cuenta de Acceso Automática:</strong> Se creará una cuenta para iniciar sesión. Su usuario será <strong>{{ instructorForm.correo || 'el correo ingresado' }}</strong> y su contraseña estándar inicial será <strong>sena2026</strong> (el docente podrá cambiarla desde su Perfil).
+        <strong>Cuenta de Acceso Automática:</strong> Se creará una cuenta para iniciar sesión. Su usuario será <strong>{{ instructorForm.correo || 'el correo ingresado' }}</strong> y su contraseña estándar inicial será <strong>sena2026</strong> (el docente podrá cambiarla desde su Perfil).
       </div>
       <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
         <button class="btn btn-outline" @click="closeModal">Cancelar</button>
@@ -241,3 +416,149 @@ function nombreCompleto(i) { return `${i.nombres} ${i.apellidos}` }
 
   <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
 </template>
+
+<style scoped>
+.busqueda-card {
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.busqueda-header {
+  margin-bottom: 16px;
+}
+
+.header-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge-filtros-activos {
+  background: rgba(26, 115, 232, 0.12);
+  color: #1a73e8;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.btn-limpiar {
+  color: #dc2626;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.btn-limpiar:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.busqueda-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.busqueda-fila {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.busqueda-fila-textos {
+  grid-template-columns: 1fr 1fr;
+}
+
+.busqueda-fila-selects {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+@media (max-width: 860px) {
+  .busqueda-fila-textos,
+  .busqueda-fila-selects {
+    grid-template-columns: 1fr;
+  }
+}
+
+.campo-busqueda {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.campo-busqueda label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.input-con-clear {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.input-control {
+  width: 100%;
+  height: 40px;
+  padding: 8px 32px 8px 12px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-family: inherit;
+  background: #ffffff;
+  color: #1e293b;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.input-control:focus {
+  outline: none;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.15);
+  background: #ffffff;
+}
+
+.btn-clear-campo {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 50%;
+}
+
+.btn-clear-campo:hover {
+  color: #ef4444;
+  background: #f1f5f9;
+}
+
+.select-control {
+  width: 100%;
+  height: 40px;
+  padding: 8px 12px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-family: inherit;
+  background: #ffffff;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.select-control:focus {
+  outline: none;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.15);
+}
+</style>
