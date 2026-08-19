@@ -10,8 +10,12 @@ const loading = ref(false)
 const sincronizandoAPI = ref(false)
 
 const diaFestivoForm = reactive({
-  fecha: '', motivo: 'Festivo', fichasAplicables: 'todas',
-  fichasSeleccionadas: [], descripcion: '',
+  fecha: '',
+  motivo: 'Festivo',
+  fichasAplicables: 'todas',
+  jornadasSeleccionadas: ['Mañana', 'Tarde', 'Noche'],
+  fichasSeleccionadas: [],
+  descripcion: '',
 })
 
 const diasFestivos = ref([])
@@ -48,14 +52,24 @@ function showToastFn(message, type = 'success') {
 
 function openCreate() {
   editingId.value = null
-  Object.assign(diaFestivoForm, { fecha: '', motivo: 'Festivo', fichasAplicables: 'todas', fichasSeleccionadas: [], descripcion: '' })
+  Object.assign(diaFestivoForm, {
+    fecha: '',
+    motivo: 'Festivo',
+    fichasAplicables: 'todas',
+    jornadasSeleccionadas: ['Mañana', 'Tarde', 'Noche'],
+    fichasSeleccionadas: [],
+    descripcion: ''
+  })
   showModal.value = true
 }
 
 function openEdit(dia) {
   editingId.value = dia._id
   Object.assign(diaFestivoForm, {
-    fecha: dia.fecha, motivo: dia.motivo, fichasAplicables: dia.fichasAplicables,
+    fecha: dia.fecha,
+    motivo: dia.motivo,
+    fichasAplicables: dia.fichasAplicables || 'todas',
+    jornadasSeleccionadas: dia.jornadasSeleccionadas?.length ? [...dia.jornadasSeleccionadas] : ['Mañana', 'Tarde', 'Noche'],
     fichasSeleccionadas: (dia.fichasSeleccionadas || []).map(f => f._id || f),
     descripcion: dia.descripcion || '',
   })
@@ -63,6 +77,12 @@ function openEdit(dia) {
 }
 
 function closeModal() { showModal.value = false }
+
+function toggleJornada(j) {
+  const idx = diaFestivoForm.jornadasSeleccionadas.indexOf(j)
+  if (idx === -1) diaFestivoForm.jornadasSeleccionadas.push(j)
+  else diaFestivoForm.jornadasSeleccionadas.splice(idx, 1)
+}
 
 function toggleFicha(fichaId) {
   const idx = diaFestivoForm.fichasSeleccionadas.indexOf(fichaId)
@@ -88,6 +108,7 @@ async function sincronizarAPI() {
           motivo: 'Festivo',
           descripcion: fest.localName || fest.name,
           fichasAplicables: 'todas',
+          jornadasSeleccionadas: ['Mañana', 'Tarde', 'Noche'],
           fichasSeleccionadas: []
         })
         agregados++
@@ -96,7 +117,7 @@ async function sincronizarAPI() {
 
     await loadDiasFestivos()
     if (agregados > 0) {
-      showToastFn(`Se sincronizaron ${agregados} días festivos de Colombia (${anioActual}) automáticamente`)
+      showToastFn(`Se sincronizaron ${agregados} días festivos de Colombia (${anioActual}) e inhabilitaron automáticamente`)
     } else {
       showToastFn(`Los días festivos oficiales de Colombia (${anioActual}) ya están registrados`)
     }
@@ -115,17 +136,19 @@ async function guardarDiaFestivo() {
   loading.value = true
   try {
     const body = {
-      fecha: diaFestivoForm.fecha, motivo: diaFestivoForm.motivo,
+      fecha: diaFestivoForm.fecha,
+      motivo: diaFestivoForm.motivo,
       fichasAplicables: diaFestivoForm.fichasAplicables,
+      jornadasSeleccionadas: diaFestivoForm.jornadasSeleccionadas,
       fichasSeleccionadas: diaFestivoForm.fichasSeleccionadas,
       descripcion: diaFestivoForm.descripcion,
     }
     if (editingId.value) {
       await api.diasFestivos.update(editingId.value, body)
-      showToastFn('Día festivo actualizado correctamente')
+      showToastFn('Día festivo / inhabilitación actualizado correctamente')
     } else {
       await api.diasFestivos.create(body)
-      showToastFn('Día festivo registrado correctamente')
+      showToastFn('Día festivo / inhabilitación registrado correctamente')
     }
     await loadDiasFestivos()
     closeModal()
@@ -137,27 +160,32 @@ async function guardarDiaFestivo() {
 }
 
 async function eliminarDiaFestivo(id) {
-  if (!confirm('¿Deseas eliminar este día festivo?')) return
+  if (!confirm('¿Deseas eliminar este día festivo / inhabilitación?')) return
   try {
     await api.diasFestivos.delete(id)
     await loadDiasFestivos()
-    showToastFn('Día festivo eliminado correctamente')
+    showToastFn('Día festivo / inhabilitación eliminado correctamente')
   } catch (e) {
     showToastFn('Error: ' + e.message, 'error')
   }
 }
 
 function motivoBadge(motivo) {
-  if (motivo === 'Festivo') return 'holidays-badge-primary'
-  if (motivo === 'Jornada Pedagogica' || motivo === 'Jornada Pedagógica') return 'holidays-badge-warning'
-  return 'holidays-badge-special'
+  if (motivo === 'Festivo') return 'badge-primary'
+  if (motivo === 'Inhabilitado Institucional' || motivo === 'Inhabilitado') return 'badge-danger'
+  if (motivo === 'Jornada Pedagogica' || motivo === 'Jornada Pedagógica') return 'badge-warning'
+  return 'badge-ficha'
 }
 
 function getFichasNombres(dia) {
-  if (dia.fichasAplicables === 'todas') return 'Todas las fichas'
-  if (!dia.fichasSeleccionadas || dia.fichasSeleccionadas.length === 0) return 'Todas las fichas'
+  if (dia.fichasAplicables === 'todas') return 'Todas las clases y jornadas'
+  if (dia.fichasAplicables === 'jornada') {
+    const j = (dia.jornadasSeleccionadas || []).join(', ')
+    return `Jornadas: ${j || 'Ninguna'}`
+  }
+  if (!dia.fichasSeleccionadas || dia.fichasSeleccionadas.length === 0) return 'Todas las clases'
   return dia.fichasSeleccionadas.map(id => {
-    const f = fichasList.value.find(f => (f._id === id) || (f._id === id._id))
+    const f = fichasList.value.find(f => (f._id === id) || (f._id === id?._id))
     return f ? f.codigoFicha : ''
   }).filter(Boolean).join(', ')
 }
@@ -171,55 +199,57 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
 </script>
 
 <template>
-  <div class="holidays-page-header">
-    <h1>Días Festivos y Recesos</h1>
-    <p>Sincroniza festivos de Colombia vía API o márcalos manualmente</p>
+  <div class="page-header">
+    <h1>Días Festivos e Inhabilitados</h1>
+    <p>Inhabilita automáticamente las clases de la institución por festivos, jornadas o fichas seleccionadas</p>
   </div>
 
-  <div class="holidays-card">
-    <div class="holidays-card-header">
-      <h3>Calendario de Días No Laborables</h3>
-      <div class="holidays-button-group">
-        <button class="holidays-button holidays-button-outline" @click="sincronizarAPI" :disabled="sincronizandoAPI">
-          {{ sincronizandoAPI ? '⏳ Sincronizando...' : '🌐 Sincronizar Festivos Colombia (API)' }}
+  <div class="card">
+    <div class="card-header">
+      <h3>Calendario de Días No Laborables / Inhabilitados</h3>
+      <div class="btn-group">
+        <button class="btn btn-outline" @click="sincronizarAPI" :disabled="sincronizandoAPI">
+          {{ sincronizandoAPI ? 'Sincronizando...' : 'Sincronizar Festivos Colombia (API)' }}
         </button>
-        <button class="holidays-button holidays-button-primary" @click="openCreate">
-          ➕ Marcar Día Manual
+        <button class="btn btn-primary" @click="openCreate">
+          + Inhabilitar Día / Registrar Festivo
         </button>
       </div>
     </div>
 
-    <div v-if="diasOrdenados.length === 0" class="holidays-empty-state">
-      <p>No hay días festivos marcados. Puedes sincronizarlos automáticamente vía API o usar el botón de registro manual.</p>
+    <div v-if="diasOrdenados.length === 0" class="empty-state">
+      <p>No hay días festivos ni inhabilitaciones registradas.</p>
     </div>
 
     <div v-else>
-      <div v-if="diasFuturos.length > 0" class="holidays-upcoming-section">
-        <h4 class="holidays-section-title">Próximos Días No Laborables</h4>
-        <div class="holidays-grid">
-          <div v-for="d in diasFuturos" :key="d._id" class="holidays-card-item" :class="{ 'holidays-card-today': esHoy(d.fecha) }">
-            <div class="holidays-date-box">
-              <span class="holidays-date-day">{{ d.fecha.slice(8) }}</span>
-              <span class="holidays-date-month">{{ new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { month: 'short' }) }}</span>
+      <div v-if="diasFuturos.length > 0" style="margin-bottom: 24px;">
+        <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text);">Próximos Días Inhabilitados / Festivos</h4>
+        <div class="festivos-grid">
+          <div v-for="d in diasFuturos" :key="d._id" class="festivo-card" :class="{ 'festivo-hoy': esHoy(d.fecha) }">
+            <div class="festivo-fecha">
+              <span class="festivo-dia">{{ d.fecha.slice(8) }}</span>
+              <span class="festivo-mes">{{ new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { month: 'short' }) }}</span>
             </div>
             <div class="holidays-item-info">
               <strong>{{ d.descripcion || d.motivo }}</strong>
-              <span class="holidays-badge" :class="motivoBadge(d.motivo)">{{ d.motivo }}</span>
-              <span class="holidays-item-fiches">{{ getFichasNombres(d) }}</span>
+              <div style="display: flex; gap: 6px; align-items: center; margin-top: 2px;">
+                <span class="badge" :class="motivoBadge(d.motivo)">{{ d.motivo }}</span>
+              </div>
+              <span style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">{{ getFichasNombres(d) }}</span>
             </div>
-            <div class="holidays-button-group">
-              <button class="holidays-button holidays-button-outline holidays-button-small" @click="openEdit(d)">✏️ Editar</button>
-              <button class="holidays-button holidays-button-danger holidays-button-small" @click="eliminarDiaFestivo(d._id)">🗑️ Eliminar</button>
+            <div class="btn-group">
+              <button class="btn btn-outline btn-sm" @click="openEdit(d)">Editar</button>
+              <button class="btn btn-danger btn-sm" @click="eliminarDiaFestivo(d._id)">Eliminar</button>
             </div>
           </div>
         </div>
       </div>
 
       <div v-if="diasPasados.length > 0">
-        <h4 class="holidays-section-title holidays-section-title-past">Días Anteriores ({{ diasPasados.length }})</h4>
-        <div class="holidays-table-container">
-          <table class="holidays-table">
-            <thead><tr><th>Fecha</th><th>Motivo</th><th>Descripción</th><th>Fichas</th><th>Acciones</th></tr></thead>
+        <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary);">Días Anteriores ({{ diasPasados.length }})</h4>
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Fecha</th><th>Motivo</th><th>Descripción</th><th>Alcance</th><th>Acciones</th></tr></thead>
             <tbody>
               <tr v-for="d in diasPasados" :key="d._id">
                 <td>{{ formatFecha(d.fecha) }}</td>
@@ -227,9 +257,9 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
                 <td>{{ d.descripcion || '—' }}</td>
                 <td class="holidays-fiches-cell">{{ getFichasNombres(d) }}</td>
                 <td>
-                  <div class="holidays-button-group">
-                    <button class="holidays-button holidays-button-outline holidays-button-small" @click="openEdit(d)">✏️ Editar</button>
-                    <button class="holidays-button holidays-button-danger holidays-button-small" @click="eliminarDiaFestivo(d._id)">🗑️ Eliminar</button>
+                  <div class="btn-group">
+                    <button class="btn btn-outline btn-sm" @click="openEdit(d)">Editar</button>
+                    <button class="btn btn-danger btn-sm" @click="eliminarDiaFestivo(d._id)">Eliminar</button>
                   </div>
                 </td>
               </tr>
@@ -240,36 +270,100 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
     </div>
   </div>
 
-  <div v-if="showModal" class="holidays-modal-overlay" @click.self="closeModal">
-    <div class="holidays-modal">
-      <h2>{{ editingId ? '✏️ Editar' : '➕ Marcar' }} Día Festivo (Manual)</h2>
-      <div class="holidays-form-grid">
-        <div class="holidays-form-group"><label>Fecha *</label><input v-model="diaFestivoForm.fecha" type="date" /></div>
-        <div class="holidays-form-group">
+  <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+    <div class="modal">
+      <h2>{{ editingId ? 'Editar' : 'Registrar' }} Día Festivo / Inhabilitación</h2>
+      <div class="form-grid">
+        <div class="form-group"><label>Fecha *</label><input v-model="diaFestivoForm.fecha" type="date" /></div>
+        <div class="form-group">
           <label>Motivo *</label>
           <select v-model="diaFestivoForm.motivo">
             <option value="Festivo">Festivo Oficial</option>
+            <option value="Inhabilitado Institucional">Inhabilitado Institucional</option>
             <option value="Jornada Pedagogica">Jornada Pedagógica</option>
             <option value="Receso">Receso / Vacaciones</option>
+            <option value="Actividad Especial">Actividad Especial</option>
           </select>
         </div>
-        <div class="holidays-form-group"><label>Descripción (Opcional)</label><input v-model="diaFestivoForm.descripcion" type="text" placeholder="Ej: Día de la Independencia, Aniversario..." /></div>
-        <div class="holidays-form-group"><label>Aplicable a</label><select v-model="diaFestivoForm.fichasAplicables"><option value="todas">Todas las fichas</option><option value="especificas">Fichas específicas</option></select></div>
+        <div class="form-group"><label>Descripción (Opcional)</label><input v-model="diaFestivoForm.descripcion" type="text" placeholder="Ej: Día festivo nacional, Día cívico, Reunión..." /></div>
+        <div class="form-group">
+          <label>Inhabilitar Clases</label>
+          <select v-model="diaFestivoForm.fichasAplicables">
+            <option value="todas">Todas las clases y jornadas</option>
+            <option value="jornada">Por jornadas específicas</option>
+            <option value="especificas">Por fichas específicas</option>
+          </select>
+        </div>
       </div>
-      <div v-if="diaFestivoForm.fichasAplicables === 'especificas'" class="holidays-selection-section">
-        <label class="holidays-selection-label">Selecciona las fichas</label>
-        <div class="holidays-fiches-check-grid">
-          <label v-for="f in fichasList" :key="f._id" class="holidays-fiche-check-item">
-            <input type="checkbox" :checked="diaFestivoForm.fichasSeleccionadas.includes(f._id)" @change="toggleFicha(f._id)" /><span>{{ f.codigoFicha }} - {{ f.nombrePrograma }}</span>
+
+      <!-- Selección de Jornadas -->
+      <div v-if="diaFestivoForm.fichasAplicables === 'jornada'" style="margin-top: 16px;">
+        <label style="font-size: 13px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">
+          Selecciona las jornadas a inhabilitar
+        </label>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+          <label class="ficha-check-item" style="cursor: pointer;">
+            <input type="checkbox" :checked="diaFestivoForm.jornadasSeleccionadas.includes('Mañana')" @change="toggleJornada('Mañana')" />
+            <span>Mañana</span>
+          </label>
+          <label class="ficha-check-item" style="cursor: pointer;">
+            <input type="checkbox" :checked="diaFestivoForm.jornadasSeleccionadas.includes('Tarde')" @change="toggleJornada('Tarde')" />
+            <span>Tarde</span>
+          </label>
+          <label class="ficha-check-item" style="cursor: pointer;">
+            <input type="checkbox" :checked="diaFestivoForm.jornadasSeleccionadas.includes('Noche')" @change="toggleJornada('Noche')" />
+            <span>Noche</span>
           </label>
         </div>
       </div>
-      <div class="holidays-modal-actions">
-        <button class="holidays-button holidays-button-outline" @click="closeModal">Cancelar</button>
-        <button class="holidays-button holidays-button-primary" @click="guardarDiaFestivo" :disabled="loading">{{ loading ? 'Guardando...' : (editingId ? '💾 Actualizar' : '➕ Registrar') }}</button>
+
+      <!-- Selección de Fichas Específicas -->
+      <div v-if="diaFestivoForm.fichasAplicables === 'especificas'" style="margin-top: 16px;">
+        <label style="font-size: 13px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block;">
+          Selecciona las fichas a inhabilitar
+        </label>
+        <div class="fichas-check-grid">
+          <label v-for="f in fichasList" :key="f._id" class="ficha-check-item">
+            <input type="checkbox" :checked="diaFestivoForm.fichasSeleccionadas.includes(f._id)" @change="toggleFicha(f._id)" />
+            <span>{{ f.codigoFicha }} - {{ f.nombrePrograma }} ({{ f.jornada }})</span>
+          </label>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12.5px; color: #1e40af;">
+        ℹ️ Al guardar, se inhabilitará la toma de asistencia para las fichas y jornadas seleccionadas en esta fecha tanto en el panel docente como en el reporte institucional SQLite.
+      </div>
+
+      <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
+        <button class="btn btn-outline" @click="closeModal">Cancelar</button>
+        <button class="btn btn-primary" @click="guardarDiaFestivo" :disabled="loading">
+          {{ loading ? 'Guardando...' : (editingId ? 'Actualizar' : 'Guardar e Inhabilitar') }}
+        </button>
       </div>
     </div>
   </div>
 
   <div v-if="toast.show" class="holidays-toast" :class="'holidays-toast-' + toast.type">{{ toast.message }}</div>
 </template>
+
+<style scoped>
+.page-header { margin-bottom: 24px; }
+.page-header h1 { font-size: 24px; font-weight: 700; color: #1e293b; }
+.page-header p { color: #64748b; font-size: 14px; }
+.card { background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+.card-header h3 { font-size: 16px; font-weight: 700; color: #1e293b; }
+.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+.festivos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.festivo-card { display: flex; align-items: center; gap: 14px; padding: 14px; background: #f8fafc; border-radius: 10px; border: 1px solid #cbd5e1; }
+.festivo-hoy { border-color: #3b82f6; background: #eff6ff; }
+.festivo-fecha { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 50px; height: 50px; background: #fff; border-radius: 8px; border: 1px solid #cbd5e1; flex-shrink: 0; }
+.festivo-dia { font-size: 20px; font-weight: 700; color: #1e293b; line-height: 1; }
+.festivo-mes { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 600; }
+.festivo-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.fichas-check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-height: 180px; overflow-y: auto; padding: 8px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; }
+.ficha-check-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font-size: 13px; }
+.toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; font-weight: 600; color: white; z-index: 9999; }
+.toast-success { background: #16a34a; }
+.toast-error { background: #dc2626; }
+</style>

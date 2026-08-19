@@ -87,6 +87,8 @@ export default {
     create(body) { return request('/asistencias', { method: 'POST', body: JSON.stringify(body) }) },
     inhabilitarJornada(body) { return request('/asistencias/inhabilitar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
     reactivarJornada(body) { return request('/asistencias/reactivar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
+    downloadSqliteUrl() { return `${BASE}/asistencias/sqlite/download` },
+    syncAllSqlite() { return request('/asistencias/sqlite/sync-all', { method: 'POST' }) },
   },
 
   excusas: {

@@ -6,7 +6,15 @@ const router = Router()
 
 router.get('/', async (req, res) => {
   try {
-    const fichas = await Ficha.find()
+    const { instructorId } = req.query
+    const filter = {}
+    if (instructorId) {
+      filter.$or = [
+        { instructorLiderId: instructorId },
+        { instructores: instructorId }
+      ]
+    }
+    const fichas = await Ficha.find(filter)
       .populate('instructorLiderId', 'nombres apellidos correo')
       .populate('instructores', 'nombres apellidos correo')
       .sort({ createdAt: -1 })

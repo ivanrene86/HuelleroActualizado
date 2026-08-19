@@ -13,6 +13,10 @@ const filtroEstado = ref('Todos')
 const busquedaAvanzadaAbierta = ref(false)
 const loading = ref(false)
 
+const userStr = sessionStorage.getItem('user_data')
+const usuario = ref(userStr ? JSON.parse(userStr) : null)
+const esInstructor = computed(() => usuario.value?.rol === 'Instructor')
+
 const busqueda = reactive({ fichaId: null, jornada: '', documento: '', nombres: '', estadoAsistencia: '' })
 
 const estudianteForm = reactive({
@@ -26,11 +30,25 @@ const fichasList = ref([])
 onMounted(async () => { await Promise.all([loadEstudiantes(), loadFichas()]) })
 
 async function loadEstudiantes() {
-  try { estudiantes.value = await api.estudiantes.getAll() } catch (e) { showToastFn('Error al cargar estudiantes', 'error') }
+  try {
+    const params = {}
+    if (esInstructor.value && usuario.value?.id) {
+      params.instructorId = usuario.value.id
+    }
+    estudiantes.value = await api.estudiantes.getAll(params)
+  } catch (e) {
+    showToastFn('Error al cargar estudiantes', 'error')
+  }
 }
 
 async function loadFichas() {
-  try { fichasList.value = await api.fichas.getAll() } catch (e) {}
+  try {
+    if (esInstructor.value && usuario.value?.id) {
+      fichasList.value = await api.fichas.getMisFichas(usuario.value.id)
+    } else {
+      fichasList.value = await api.fichas.getAll()
+    }
+  } catch (e) {}
 }
 
 function getFichaById(fichaId) {
@@ -230,8 +248,20 @@ function retiradosCount() { return estudiantes.value.filter(e => e.estado === 'R
 
 <template>
   <div class="page-header">
-    <h1>Estudiantes</h1>
-    <p>Gestiona los estudiantes. Al inhabilitar o retirar se conserva la trazabilidad.</p>
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+      <div>
+        <h1>Estudiantes</h1>
+        <p v-if="esInstructor">
+          👨‍🏫 Mostrando únicamente los aprendices de <strong>tus fichas asignadas</strong>.
+        </p>
+        <p v-else>
+          Gestiona los estudiantes. Al inhabilitar o retirar se conserva la trazabilidad.
+        </p>
+      </div>
+      <div v-if="esInstructor" style="background: rgba(16, 185, 129, 0.1); border: 1px solid #6ee7b7; color: #065f46; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600;">
+        Fichas asignadas: {{ fichasList.length }}
+      </div>
+    </div>
   </div>
 
   <div class="stats-row">

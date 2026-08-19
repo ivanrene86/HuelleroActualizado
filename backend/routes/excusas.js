@@ -2,6 +2,8 @@ import { Router } from 'express'
 import Excusa from '../models/Excusa.js'
 import Asistencia from '../models/Asistencia.js'
 import Estudiante from '../models/Estudiante.js'
+import Ficha from '../models/Ficha.js'
+import { upsertAsistenciaSQLite } from '../services/sqliteExport.js'
 
 const router = Router()
 
@@ -67,6 +69,32 @@ router.put('/:id/aprobar', async (req, res) => {
     }
 
     await Estudiante.findByIdAndUpdate(excusa.estudianteId, { estadoAsistencia: 'Excusada' })
+
+    // Sincronizar actualización en SQLite sin exponer el motivo personal
+    try {
+      const [estudianteDoc, fichaDoc] = await Promise.all([
+        Estudiante.findById(excusa.estudianteId),
+        Ficha.findById(excusa.fichaId)
+      ])
+
+      if (estudianteDoc && fichaDoc) {
+        upsertAsistenciaSQLite({
+          fichaCodigo: fichaDoc.codigoFicha || String(excusa.fichaId),
+          nombrePrograma: fichaDoc.nombrePrograma || '',
+          jornada: fichaDoc.jornada || '',
+          documentoAprendiz: estudianteDoc.numeroDocumento || '',
+          nombreAprendiz: `${estudianteDoc.nombres || ''} ${estudianteDoc.apellidos || ''}`.trim(),
+          correoAprendiz: estudianteDoc.correo || '',
+          fecha: excusa.fechaInasistencia,
+          estado: 'Excusada',
+          hora: asistencia?.hora || '—',
+          horasTardanza: 0,
+          tiempoTardanza: '0 horas'
+        })
+      }
+    } catch (sqliteErr) {
+      console.warn('[SQLite] Error al actualizar excusa en SQLite:', sqliteErr.message)
+    }
 
     res.json({ ok: true, excusa })
   } catch (err) {

@@ -8,9 +8,48 @@ const router = Router()
 
 router.get('/', async (req, res) => {
   try {
-    const { fichaId, documento, nombres, estado } = req.query
+    const { fichaId, documento, nombres, estado, instructorId } = req.query
     const filter = {}
-    if (fichaId) {
+
+    if (instructorId) {
+      const misFichas = await Ficha.find({
+        $or: [
+          { instructorLiderId: instructorId },
+          { instructores: instructorId }
+        ]
+      })
+      const misFichaIds = []
+      misFichas.forEach(f => {
+        misFichaIds.push(f._id)
+        misFichaIds.push(String(f._id))
+        if (f.codigoFicha) misFichaIds.push(f.codigoFicha)
+      })
+
+      if (fichaId) {
+        const idsBuscar = [fichaId]
+        if (mongoose.Types.ObjectId.isValid(fichaId)) {
+          idsBuscar.push(new mongoose.Types.ObjectId(fichaId))
+        }
+        try {
+          const queryFicha = []
+          if (mongoose.Types.ObjectId.isValid(fichaId)) {
+            queryFicha.push({ _id: fichaId })
+          }
+          queryFicha.push({ codigoFicha: String(fichaId).trim() })
+          const fichaDoc = await Ficha.findOne({ $or: queryFicha })
+          if (fichaDoc) {
+            idsBuscar.push(fichaDoc._id)
+            idsBuscar.push(String(fichaDoc._id))
+            if (fichaDoc.codigoFicha) idsBuscar.push(fichaDoc.codigoFicha)
+          }
+        } catch (e) {}
+
+        const permitidos = idsBuscar.filter(id => misFichaIds.some(mfId => String(mfId) === String(id)))
+        filter.fichaId = { $in: permitidos.length > 0 ? permitidos : [new mongoose.Types.ObjectId()] }
+      } else {
+        filter.fichaId = { $in: misFichaIds.length > 0 ? misFichaIds : [new mongoose.Types.ObjectId()] }
+      }
+    } else if (fichaId) {
       const idsBuscar = [fichaId]
       if (mongoose.Types.ObjectId.isValid(fichaId)) {
         idsBuscar.push(new mongoose.Types.ObjectId(fichaId))
@@ -32,6 +71,7 @@ router.get('/', async (req, res) => {
 
       filter.fichaId = { $in: idsBuscar }
     }
+
     if (estado) filter.estado = estado
     if (documento) filter.numeroDocumento = { $regex: documento, $options: 'i' }
     if (nombres) {
@@ -110,6 +150,22 @@ router.post('/enroll-complete', async (req, res) => {
     return res.status(500).json({ success: false, error: result.error })
   }
   try {
+    // 1. Validar que la huella no pertenezca a otra persona ya registrada en el sistema
+    const otrosEstudiantesEnrolados = await Estudiante.find({
+      _id: { $ne: result.studentId },
+      huellaEnrolada: true,
+      huellaTemplate: { $ne: '' }
+    })
+
+    const duplicateCheck = fp.checkDuplicateFingerprint(result.template, otrosEstudiantesEnrolados, result.studentId)
+    if (duplicateCheck.isDuplicate) {
+      const otro = duplicateCheck.student
+      return res.status(409).json({
+        success: false,
+        error: `Esta huella ya se encuentra registrada en el sistema a nombre de "${otro.nombres} ${otro.apellidos}" (${otro.tipoDocumento} ${otro.numeroDocumento}). Cada huella dactilar debe ser única por aprendiz.`
+      })
+    }
+
     const estudiante = await Estudiante.findByIdAndUpdate(
       result.studentId,
       {
