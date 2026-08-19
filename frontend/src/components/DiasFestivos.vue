@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import api from '../services/api.js'
+import './diasFestivos.css'
 
 const toast = ref({ show: false, message: '', type: '' })
 const showModal = ref(false)
@@ -229,7 +230,7 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
               <span class="festivo-dia">{{ d.fecha.slice(8) }}</span>
               <span class="festivo-mes">{{ new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { month: 'short' }) }}</span>
             </div>
-            <div class="festivo-info">
+            <div class="holidays-item-info">
               <strong>{{ d.descripcion || d.motivo }}</strong>
               <div style="display: flex; gap: 6px; align-items: center; margin-top: 2px;">
                 <span class="badge" :class="motivoBadge(d.motivo)">{{ d.motivo }}</span>
@@ -252,9 +253,9 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
             <tbody>
               <tr v-for="d in diasPasados" :key="d._id">
                 <td>{{ formatFecha(d.fecha) }}</td>
-                <td><span class="badge" :class="motivoBadge(d.motivo)">{{ d.motivo }}</span></td>
+                <td><span class="holidays-badge" :class="motivoBadge(d.motivo)">{{ d.motivo }}</span></td>
                 <td>{{ d.descripcion || '—' }}</td>
-                <td style="font-size: 12px;">{{ getFichasNombres(d) }}</td>
+                <td class="holidays-fiches-cell">{{ getFichasNombres(d) }}</td>
                 <td>
                   <div class="btn-group">
                     <button class="btn btn-outline btn-sm" @click="openEdit(d)">Editar</button>
@@ -342,7 +343,7 @@ function esHoy(fecha) { return fecha === new Date().toISOString().slice(0, 10) }
     </div>
   </div>
 
-  <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
+  <div v-if="toast.show" class="holidays-toast" :class="'holidays-toast-' + toast.type">{{ toast.message }}</div>
 </template>
 
 <style scoped>
