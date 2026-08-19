@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import api from '../services/api.js'
+import './panelEstudiante.css'
 
 const userStr = sessionStorage.getItem('user_data')
 const usuario = ref(userStr ? JSON.parse(userStr) : { id: '', nombre: 'Estudiante', rol: 'Estudiante' })
@@ -90,55 +91,55 @@ async function radicarExcusa() {
 </script>
 
 <template>
-  <div class="panel-estudiante">
-    <div class="estudiante-header">
+  <div class="student-portal-page">
+    <div class="student-portal-header">
       <div>
         <h2>Portal del Aprendiz SENA</h2>
-        <p class="subtitle">Consulta de Asistencias, Fichas y Excusas</p>
+        <p class="student-portal-subtitle">Consulta de Asistencias, Fichas y Excusas</p>
       </div>
       <div style="display: flex; gap: 12px; align-items: center;">
-        <span class="role-pill">Aprendiz</span>
-        <button class="btn-logout-panel" @click="cerrarSesion">
+        <span class="student-portal-role">Aprendiz</span>
+        <button class="student-portal-logout" @click="cerrarSesion">
           🚪 Cerrar Sesión
         </button>
       </div>
     </div>
 
-    <div v-if="loading" class="loading-box">
+    <div v-if="loading" class="student-portal-loading">
       Cargando tu perfil e información de asistencia...
     </div>
 
-    <div v-else-if="error" class="alert alert-error">
+    <div v-else-if="error" class="student-portal-error">
       {{ error }}
     </div>
 
-    <div v-else class="estudiante-grid">
+    <div v-else class="student-portal-grid">
       <!-- Tarjeta Perfil & Ficha -->
-      <div class="card-perfil">
-        <div class="avatar-big">
+      <div class="student-portal-profile-card">
+        <div class="student-portal-avatar">
           {{ estudiante?.nombres?.charAt(0) }}{{ estudiante?.apellidos?.charAt(0) }}
         </div>
         <h3>{{ estudiante?.nombres }} {{ estudiante?.apellidos }}</h3>
-        <p class="doc-text">{{ estudiante?.tipoDocumento }} {{ estudiante?.numeroDocumento }}</p>
+        <p class="student-portal-document">{{ estudiante?.tipoDocumento }} {{ estudiante?.numeroDocumento }}</p>
 
-        <div class="info-list">
-          <div class="info-item">
+        <div class="student-portal-info-list">
+          <div class="student-portal-info-item">
             <span>Ficha:</span>
             <strong>{{ ficha ? `${ficha.codigoFicha} - ${ficha.nombrePrograma}` : 'No asignada' }}</strong>
           </div>
-          <div class="info-item">
+          <div class="student-portal-info-item">
             <span>Jornada:</span>
             <strong>{{ ficha ? ficha.jornada : '—' }}</strong>
           </div>
-          <div class="info-item">
+          <div class="student-portal-info-item">
             <span>Aula:</span>
             <strong>{{ ficha ? ficha.aulaAsignada : '—' }}</strong>
           </div>
-          <div class="info-item">
+          <div class="student-portal-info-item">
             <span>Instructor Líder:</span>
             <strong>{{ instructorLider ? `${instructorLider.nombres} ${instructorLider.apellidos}` : 'No asignado' }}</strong>
           </div>
-          <div class="info-item">
+          <div class="student-portal-info-item">
             <span>Huella Biométrica:</span>
             <strong :style="{ color: estudiante?.huellaEnrolada ? '#16a34a' : '#d97706' }">
               {{ estudiante?.huellaEnrolada ? '🟢 Enrolada' : '🟡 Pendiente de Enrolar' }}
@@ -148,29 +149,29 @@ async function radicarExcusa() {
       </div>
 
       <!-- Métricas y Registros -->
-      <div class="estudiante-main">
-        <div class="stats-row">
-          <div class="stat-card stat-activo">
-            <span class="stat-num">{{ resumen.presentes }}</span>
-            <span class="stat-label">Presentes</span>
+      <div class="student-portal-main">
+        <div class="student-portal-stats">
+          <div class="student-portal-stat student-portal-stat-present">
+            <span class="student-portal-stat-number">{{ resumen.presentes }}</span>
+            <span class="student-portal-stat-label">Presentes</span>
           </div>
-          <div class="stat-card stat-inactivo">
-            <span class="stat-num">{{ resumen.retardos }}</span>
-            <span class="stat-label">Retardos</span>
+          <div class="student-portal-stat student-portal-stat-late">
+            <span class="student-portal-stat-number">{{ resumen.retardos }}</span>
+            <span class="student-portal-stat-label">Retardos</span>
           </div>
-          <div class="stat-card stat-retirado">
-            <span class="stat-num">{{ resumen.fallas }}</span>
-            <span class="stat-label">Fallas / Ausencias</span>
+          <div class="student-portal-stat student-portal-stat-absent">
+            <span class="student-portal-stat-number">{{ resumen.fallas }}</span>
+            <span class="student-portal-stat-label">Fallas / Ausencias</span>
           </div>
         </div>
 
         <!-- Tabla Historial de Asistencia -->
-        <div class="card">
-          <div class="card-header">
+        <div class="student-portal-card">
+          <div class="student-portal-card-header">
             <h3>Mi Historial de Asistencia</h3>
           </div>
-          <div class="table-container">
-            <table>
+          <div class="student-portal-table-container">
+            <table class="student-portal-table">
               <thead>
                 <tr>
                   <th>Fecha</th>
@@ -183,13 +184,13 @@ async function radicarExcusa() {
                   <td>{{ asis.fecha }}</td>
                   <td>{{ asis.hora }}</td>
                   <td>
-                    <span class="badge" :class="asis.tipo === 'Entrada' || asis.tipo === 'Presente' ? 'badge-success' : (asis.tipo === 'Retardo' ? 'badge-warning' : 'badge-danger')">
+                    <span class="student-portal-badge" :class="asis.tipo === 'Entrada' || asis.tipo === 'Presente' ? 'student-portal-badge-success' : (asis.tipo === 'Retardo' ? 'student-portal-badge-warning' : 'student-portal-badge-danger')">
                       {{ asis.tipo }}
                     </span>
                   </td>
                 </tr>
                 <tr v-if="asistencias.length === 0">
-                  <td colspan="3" class="empty-state">No tienes marcas de asistencia registradas aún.</td>
+                  <td colspan="3" class="student-portal-empty-cell">No tienes marcas de asistencia registradas aún.</td>
                 </tr>
               </tbody>
             </table>
@@ -201,99 +202,3 @@ async function radicarExcusa() {
   </div>
 </template>
 
-<style scoped>
-.panel-estudiante {
-  padding: 24px;
-}
-
-.estudiante-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.subtitle {
-  color: #64748b;
-  font-size: 14px;
-}
-
-.role-pill {
-  background: rgba(59, 130, 246, 0.15);
-  color: #2563eb;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.btn-logout-panel {
-  background: #ef4444;
-  color: #ffffff;
-  border: none;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.estudiante-grid {
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 24px;
-}
-
-.card-perfil {
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  text-align: center;
-}
-
-.avatar-big {
-  width: 72px;
-  height: 72px;
-  background: #2563eb;
-  color: #ffffff;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  font-weight: 700;
-  margin: 0 auto 16px;
-}
-
-.doc-text {
-  font-size: 13px;
-  color: #64748b;
-  margin-bottom: 20px;
-}
-
-.info-list {
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  font-size: 13px;
-}
-
-.info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-bottom: 1px dashed #e2e8f0;
-  padding-bottom: 8px;
-}
-
-.info-item span {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.btn-block {
-  width: 100%;
-}
-</style>
