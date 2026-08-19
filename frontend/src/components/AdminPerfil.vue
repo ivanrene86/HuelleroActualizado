@@ -1,6 +1,7 @@
 <script setup>
 import { reactive, ref, onMounted, computed } from 'vue'
 import api from '../services/api.js'
+import './adminPerfil.css'
 
 const toast = ref({ show: false, message: '', type: '' })
 const loading = ref(false)
@@ -134,241 +135,147 @@ async function guardarPerfil() {
 </script>
 
 <template>
-  <div class="page-header">
+  <div class="admin-profile-page-header">
     <h1>{{ esInstructor ? '👨‍🏫 Perfil del Instructor / Maestro' : '⚙️ Perfil del Administrador' }}</h1>
     <p>{{ esInstructor ? 'Información personal y académica del docente' : 'Gestiona tu información personal de administrador' }}</p>
   </div>
 
   <!-- Vista para Instructor / Maestro -->
-  <div v-if="esInstructor" class="card">
-    <div class="card-header">
+  <div v-if="esInstructor" class="admin-profile-card">
+    <div class="admin-profile-card-header">
       <h3>Datos Personales del Instructor</h3>
     </div>
-    <div class="form-grid">
-      <div class="form-group">
+    <div class="admin-profile-form-grid">
+      <div class="admin-profile-form-group">
         <label>Nombres</label>
         <input v-model="perfil.nombres" type="text" placeholder="Nombres" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Apellidos</label>
         <input v-model="perfil.apellidos" type="text" placeholder="Apellidos" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Tipo Documento</label>
         <input :value="perfil.tipoDocumento" type="text" disabled />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Número Documento</label>
         <input :value="perfil.numeroDocumento" type="text" disabled />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Especialidad / Área</label>
         <input v-model="perfil.especialidad" type="text" placeholder="Ej. Desarrollo de Software" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Rol en el Sistema</label>
         <input :value="perfil.rol" type="text" disabled />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Correo Electrónico</label>
         <input v-model="perfil.correo" type="email" placeholder="correo@sena.edu.co" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Número de Teléfono</label>
         <input v-model="perfil.telefono" type="tel" placeholder="+57 300 000 0000" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Nueva Contraseña</label>
         <input v-model="password" type="password" placeholder="Dejar vacío para mantener la actual" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Confirmar Contraseña</label>
         <input v-model="confirmPassword" type="password" placeholder="Repite la contraseña" />
       </div>
     </div>
     <div style="margin-top: 24px">
-      <button class="btn btn-primary" @click="guardarPerfil" :disabled="loading">
+      <button class="admin-profile-button admin-profile-button-primary" @click="guardarPerfil" :disabled="loading">
         {{ loading ? 'Guardando...' : '💾 Guardar Cambios' }}
       </button>
     </div>
   </div>
 
   <!-- Vista para Administrador -->
-  <div v-else class="card">
-    <div class="card-header">
+  <div v-else class="admin-profile-card">
+    <div class="admin-profile-card-header">
       <h3>Información Personal</h3>
     </div>
-    <div class="form-grid">
-      <div class="form-group">
+    <div class="admin-profile-form-grid">
+      <div class="admin-profile-form-group">
         <label>Nombre</label>
         <input v-model="perfil.nombre" type="text" placeholder="Tu nombre completo" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Rol</label>
         <input :value="perfil.rol" type="text" disabled />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Número de Teléfono</label>
         <input v-model="perfil.telefono" type="tel" placeholder="+57 300 000 0000" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Correo Electrónico</label>
         <input v-model="perfil.correo" type="email" placeholder="admin@correo.com" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Nueva Contraseña</label>
         <input v-model="password" type="password" placeholder="Dejar vacío para no cambiar" />
       </div>
-      <div class="form-group">
+      <div class="admin-profile-form-group">
         <label>Confirmar Contraseña</label>
         <input v-model="confirmPassword" type="password" placeholder="Repite la contraseña" />
       </div>
     </div>
     <div style="margin-top: 24px">
-      <button class="btn btn-primary" @click="guardarPerfil" :disabled="loading">
+      <button class="admin-profile-button admin-profile-button-primary" @click="guardarPerfil" :disabled="loading">
         {{ loading ? 'Guardando...' : 'Guardar Cambios' }}
       </button>
     </div>
   </div>
 
   <!-- Resumen del Perfil -->
-  <div class="card">
-    <div class="card-header">
+  <div class="admin-profile-card">
+    <div class="admin-profile-card-header">
       <h3>Resumen del Perfil</h3>
     </div>
-    <div class="profile-info">
-      <div class="profile-field">
+    <div class="admin-profile-info">
+      <div class="admin-profile-field">
         <label>Nombre Completo</label>
-        <div class="value">{{ (perfil.nombres ? `${perfil.nombres} ${perfil.apellidos}` : perfil.nombre) || '—' }}</div>
+        <div class="admin-profile-value">{{ (perfil.nombres ? `${perfil.nombres} ${perfil.apellidos}` : perfil.nombre) || '—' }}</div>
       </div>
-      <div class="profile-field" v-if="esInstructor">
+      <div class="admin-profile-field" v-if="esInstructor">
         <label>Documento de Identidad</label>
-        <div class="value">{{ perfil.tipoDocumento }} {{ perfil.numeroDocumento || '—' }}</div>
+        <div class="admin-profile-value">{{ perfil.tipoDocumento }} {{ perfil.numeroDocumento || '—' }}</div>
       </div>
-      <div class="profile-field">
+      <div class="admin-profile-field">
         <label>Rol en la Institución</label>
-        <div class="value">
+        <div class="admin-profile-value">
           <template v-if="esInstructor">
-            <span class="badge" :class="esLiderCalculado ? 'badge-primary' : 'badge-neutral'" style="font-size: 13px; padding: 4px 10px; font-weight: 600;">
+            <span class="admin-profile-badge" :class="esLiderCalculado ? 'admin-profile-badge-primary' : 'admin-profile-badge-neutral'" style="font-size: 13px; padding: 4px 10px; font-weight: 600;">
               {{ esLiderCalculado ? '👥 Instructor Líder' : '👨‍🏫 Instructor Común' }}
             </span>
           </template>
           <template v-else>
-            <span class="badge badge-primary" style="font-size: 13px; padding: 4px 10px;">{{ perfil.rol }}</span>
+            <span class="admin-profile-badge admin-profile-badge-primary" style="font-size: 13px; padding: 4px 10px;">{{ perfil.rol }}</span>
           </template>
         </div>
       </div>
-      <div class="profile-field" v-if="esInstructor">
+      <div class="admin-profile-field" v-if="esInstructor">
         <label>Especialidad</label>
-        <div class="value">{{ perfil.especialidad || '—' }}</div>
+        <div class="admin-profile-value">{{ perfil.especialidad || '—' }}</div>
       </div>
-      <div class="profile-field">
+      <div class="admin-profile-field">
         <label>Teléfono</label>
-        <div class="value">{{ perfil.telefono || '—' }}</div>
+        <div class="admin-profile-value">{{ perfil.telefono || '—' }}</div>
       </div>
-      <div class="profile-field">
+      <div class="admin-profile-field">
         <label>Correo Electrónico</label>
-        <div class="value">{{ perfil.correo || '—' }}</div>
+        <div class="admin-profile-value">{{ perfil.correo || '—' }}</div>
       </div>
     </div>
   </div>
 
-  <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">
+  <div v-if="toast.show" class="admin-profile-toast" :class="'admin-profile-toast-' + toast.type">
     {{ toast.message }}
   </div>
 </template>
 
-<style scoped>
-.page-header {
-  margin-bottom: 24px;
-}
-.page-header h1 {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1e293b;
-}
-.page-header p {
-  color: #64748b;
-  font-size: 14px;
-}
-.card {
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  margin-bottom: 24px;
-}
-.card-header {
-  margin-bottom: 20px;
-}
-.card-header h3 {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1e293b;
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
-}
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.form-group label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #475569;
-}
-.form-group input {
-  padding: 8px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-size: 14px;
-}
-.form-group input:disabled {
-  background: #f8fafc;
-  color: #64748b;
-}
-.btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 14px;
-  border: none;
-  cursor: pointer;
-}
-.btn-primary {
-  background: #2563eb;
-  color: white;
-}
-.profile-info {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 20px;
-}
-.profile-field label {
-  font-size: 12px;
-  color: #64748b;
-  display: block;
-  margin-bottom: 4px;
-}
-.profile-field .value {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1e293b;
-}
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 12px 20px;
-  border-radius: 8px;
-  font-weight: 600;
-  color: white;
-  z-index: 9999;
-}
-.toast-success { background: #16a34a; }
-.toast-error { background: #dc2626; }
-</style>

@@ -2,6 +2,7 @@
 import { ref, reactive } from 'vue'
 import { enviarCodigoRecuperacion } from '../services/emailService.js'
 import api from '../services/api.js'
+import './login.css'
 
 const emit = defineEmits(['login-success'])
 
@@ -209,11 +210,11 @@ async function restablecerPassword() {
 </script>
 
 <template>
-  <div class="login-page">
-    <div class="login-card">
+  <div class="login-page-shell">
+    <div class="login-panel">
       <!-- Encabezado con Logo SENA -->
-      <div class="login-header">
-        <div class="login-icon">
+      <div class="login-brand-header">
+        <div class="login-brand-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
             <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
           </svg>
@@ -224,31 +225,31 @@ async function restablecerPassword() {
 
       <template v-if="pantalla === 'login'">
         <!-- Pestañas de Selección de Acceso -->
-        <div class="access-tabs">
+        <div class="login-access-tabs">
           <button
-            class="tab-access-btn"
-            :class="{ active: tipoAcceso === 'personal' }"
+            class="login-access-tab"
+            :class="{ 'is-active': tipoAcceso === 'personal' }"
             @click="cambiarTipoAcceso('personal')"
           >
             🔒 Instructores / Personal SENA
           </button>
           <button
-            class="tab-access-btn"
-            :class="{ active: tipoAcceso === 'aprendiz' }"
+            class="login-access-tab"
+            :class="{ 'is-active': tipoAcceso === 'aprendiz' }"
             @click="cambiarTipoAcceso('aprendiz')"
           >
             🔍 Consulta Aprendiz
           </button>
         </div>
 
-        <div v-if="exito" class="login-exito">{{ exito }}</div>
-        <div v-if="error" class="login-error">{{ error }}</div>
+        <div v-if="exito" class="login-success">{{ exito }}</div>
+        <div v-if="error" class="login-error-message">{{ error }}</div>
 
         <!-- FORMULARIO 1: INSTRUCTORES / ADMIN -->
-        <div v-if="tipoAcceso === 'personal'" class="form-container">
-          <div class="form-group">
+        <div v-if="tipoAcceso === 'personal'" class="login-form-container">
+          <div class="login-form-group">
             <label>Correo Electrónico</label>
-            <input
+            <input class="login-input"
               v-model="form.correo"
               type="email"
               placeholder="correo@sena.edu.co"
@@ -256,16 +257,16 @@ async function restablecerPassword() {
             />
           </div>
 
-          <div class="form-group">
+          <div class="login-form-group">
             <label>Contraseña</label>
-            <div class="password-wrapper">
-              <input
+            <div class="login-password-wrapper">
+              <input class="login-input"
                 v-model="form.password"
                 :type="showPassword ? 'text' : 'password'"
                 placeholder="········"
                 @keyup.enter="iniciarSesionPersonal"
               />
-              <button type="button" class="toggle-password" @click="showPassword = !showPassword">
+              <button type="button" class="login-password-toggle" @click="showPassword = !showPassword">
                 <svg v-if="!showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                   <circle cx="12" cy="12" r="3"/>
@@ -278,24 +279,24 @@ async function restablecerPassword() {
             </div>
           </div>
 
-          <button class="btn btn-primary login-btn" @click="iniciarSesionPersonal" :disabled="loading">
+          <button class="login-button login-button-primary login-button-full" @click="iniciarSesionPersonal" :disabled="loading">
             {{ loading ? 'Iniciando sesión...' : '🔒 Ingresar al Sistema' }}
           </button>
 
-          <p class="login-forgot">
+          <p class="login-recovery-link">
             <a @click="irARecuperar">¿Olvidaste tu contraseña?</a>
           </p>
         </div>
 
         <!-- FORMULARIO 2: CONSULTA APRENDIZ (POR DOCUMENTO) -->
-        <div v-else class="form-container">
-          <div class="consulta-info-box">
+        <div v-else class="login-form-container">
+          <div class="login-consultation-info">
             <span>ℹ️</span> Consulta únicamente tus datos y registros de asistencia ingresando tu número de documento.
           </div>
 
-          <div class="form-group">
+          <div class="login-form-group">
             <label>Número de Documento del Aprendiz</label>
-            <input
+            <input class="login-input"
               v-model="form.documentoAprendiz"
               type="text"
               placeholder="Ej. 1012345678"
@@ -304,7 +305,7 @@ async function restablecerPassword() {
             />
           </div>
 
-          <button class="btn btn-primary login-btn btn-aprendiz" @click="consultarAprendiz" :disabled="loading">
+          <button class="login-button login-button-primary login-button-full login-button-student" @click="consultarAprendiz" :disabled="loading">
             {{ loading ? 'Consultando...' : '🔍 Consultar Mi Asistencia' }}
           </button>
         </div>
@@ -312,16 +313,16 @@ async function restablecerPassword() {
 
       <!-- PANTALLA RECUPERAR CONTRASEÑA -->
       <template v-if="pantalla === 'recuperar'">
-        <h3 style="font-size: 16px; font-weight: 600; text-align: center; margin-bottom: 20px; color: var(--text);">
+        <h3 class="login-recovery-title">
           Recuperar Contraseña
         </h3>
 
-        <div v-if="exitoRecuperar" class="login-exito">{{ exitoRecuperar }}</div>
-        <div v-if="errorRecuperar" class="login-error">{{ errorRecuperar }}</div>
+        <div v-if="exitoRecuperar" class="login-success">{{ exitoRecuperar }}</div>
+        <div v-if="errorRecuperar" class="login-error-message">{{ errorRecuperar }}</div>
 
-        <div class="form-group">
+        <div class="login-form-group">
           <label>Correo Electrónico Registrado</label>
-          <input
+          <input class="login-input"
             v-model="recuperarForm.correo"
             type="email"
             placeholder="Tu correo registrado"
@@ -331,7 +332,7 @@ async function restablecerPassword() {
 
         <button
           v-if="!codigoEnviado"
-          class="btn btn-primary login-btn"
+          class="login-button login-button-primary login-button-full"
           :disabled="enviando"
           @click="enviarCodigo"
         >
@@ -339,14 +340,14 @@ async function restablecerPassword() {
         </button>
 
         <template v-if="codigoEnviado">
-          <div v-if="mostrarCodigoEnPantalla" class="codigo-display">
+          <div v-if="mostrarCodigoEnPantalla" class="login-code-display">
             <p>Código para <strong>{{ recuperarForm.correo }}</strong>:</p>
-            <div class="codigo-numero">{{ codigoGenerado }}</div>
+            <div class="login-code-number">{{ codigoGenerado }}</div>
           </div>
 
-          <div class="form-group">
+          <div class="login-form-group">
             <label>Código de Verificación</label>
-            <input
+            <input class="login-input"
               v-model="recuperarForm.codigo"
               type="text"
               placeholder="Ingresa el código"
@@ -354,30 +355,30 @@ async function restablecerPassword() {
             />
           </div>
 
-          <div class="form-group">
+          <div class="login-form-group">
             <label>Nueva Contraseña</label>
-            <input
+            <input class="login-input"
               v-model="recuperarForm.nuevaPassword"
               type="password"
               placeholder="········"
             />
           </div>
 
-          <div class="form-group">
+          <div class="login-form-group">
             <label>Confirmar Contraseña</label>
-            <input
+            <input class="login-input"
               v-model="recuperarForm.confirmarPassword"
               type="password"
               placeholder="········"
             />
           </div>
 
-          <button class="btn btn-primary login-btn" @click="restablecerPassword">
+          <button class="login-button login-button-primary login-button-full" @click="restablecerPassword">
             Restablecer Contraseña
           </button>
         </template>
 
-        <p class="login-forgot">
+        <p class="login-recovery-link">
           <a @click="volverAlLogin">Volver al inicio de sesión</a>
         </p>
       </template>
@@ -385,53 +386,3 @@ async function restablecerPassword() {
   </div>
 </template>
 
-<style scoped>
-.access-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-  background: #f1f5f9;
-  padding: 4px;
-  border-radius: 10px;
-}
-
-.tab-access-btn {
-  flex: 1;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #64748b;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tab-access-btn.active {
-  background: #ffffff;
-  color: #2563eb;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
-.consulta-info-box {
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 8px;
-  padding: 12px 14px;
-  font-size: 13px;
-  color: #1e40af;
-  margin-bottom: 16px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.btn-aprendiz {
-  background: #16a34a !important;
-}
-
-.btn-aprendiz:hover {
-  background: #15803d !important;
-}
-</style>
