@@ -315,12 +315,7 @@ async function procesarHuellaKiosco(imageBase64) {
         // Ya había registrado asistencia previamente
         mostrarResultadoMarcacion({
           tipo: 'ya_registrado',
-          titulo: 'Ya Registraste Asistencia Hoy',
-          nombres: result.nombres,
-          apellidos: result.apellidos,
-          hora: registroPrevio.hora,
-          estado: registroPrevio.estado,
-          mensaje: `Tu asistencia fue registrada a las ${registroPrevio.hora}.`,
+          nombreCompleto,
         })
       } else {
         // Registrar nueva asistencia en BD
@@ -338,18 +333,6 @@ async function procesarHuellaKiosco(imageBase64) {
           hora: horaStr,
         }
 
-        // Agregar al feed de recientes
-        marcacionesRecientes.value.unshift({
-          id: estId,
-          nombres: result.nombres,
-          apellidos: result.apellidos,
-          hora: horaStr,
-          estado: estadoMarcado,
-        })
-        if (marcacionesRecientes.value.length > 8) {
-          marcacionesRecientes.value.pop()
-        }
-
         const datosNotificacion = {
           fichaId,
           estudianteId: estId,
@@ -365,24 +348,14 @@ async function procesarHuellaKiosco(imageBase64) {
 
         mostrarResultadoMarcacion({
           tipo: 'exito',
-          titulo: '¡Asistencia Registrada!',
-          nombres: result.nombres,
-          apellidos: result.apellidos,
-          hora: horaStr,
-          estado: estadoMarcado,
-          mensaje: estadoMarcado === 'Tardanza' ? 'Marcación fuera de hora límite.' : '¡Que tengas excelente clase!',
+          nombreCompleto,
         })
       }
     } else {
       // Huella no reconocida
       mostrarResultadoMarcacion({
         tipo: 'no_reconocida',
-        titulo: 'Huella No Reconocida',
-        nombres: 'Aprendiz no identificado',
-        apellidos: '',
-        hora: horaStr,
-        estado: 'No Encontrado',
-        mensaje: 'Por favor intente nuevamente colocando el dedo firme sobre el sensor.',
+        nombreCompleto: '',
       })
     }
   } catch (err) {
@@ -411,10 +384,10 @@ function mostrarResultadoMarcacion(resultado) {
   if (timerLimpiarMarcacion) clearTimeout(timerLimpiarMarcacion)
   ultimaMarcacion.value = resultado
 
-  // Limpiar el aviso grande después de 5 segundos para que quede listo para el siguiente
+  // Limpiar el mensaje de bienvenida después de 3.5 segundos para que quede listo para el siguiente alumno
   timerLimpiarMarcacion = setTimeout(() => {
     ultimaMarcacion.value = null
-  }, 5000)
+  }, 3500)
 }
 
 function togglePantallaCompleta() {
@@ -527,35 +500,31 @@ const porcentajeAsistencia = computed(() => {
       <template v-else>
         <!-- ÁREA CENTRAL DE BIOMETRÍA Y FEEDBACK -->
         <section class="kiosco-center-area">
-          <!-- 1. FEEDBACK GIGANTE CUANDO SE MARCA HUELA -->
+          <!-- 1. FEEDBACK LIMPIO: SOLO MENSAJE DE BIENVENIDA -->
           <transition name="pop-card">
-            <div v-if="ultimaMarcacion" class="kiosco-feedback-card" :class="`feedback-${ultimaMarcacion.tipo}`">
-              <div class="feedback-icon-box">
-                <span v-if="ultimaMarcacion.tipo === 'exito'" class="icon-big">✅</span>
-                <span v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" class="icon-big">ℹ️</span>
-                <span v-else class="icon-big">⚠️</span>
+            <div v-if="ultimaMarcacion" class="kiosco-welcome-card" :class="`welcome-${ultimaMarcacion.tipo}`">
+              <div class="welcome-icon-circle">
+                <span v-if="ultimaMarcacion.tipo === 'exito'" class="icon-glyph">👋</span>
+                <span v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" class="icon-glyph">ℹ️</span>
+                <span v-else class="icon-glyph">⚠️</span>
               </div>
 
-              <div class="feedback-content">
-                <span class="feedback-badge" :class="`badge-${ultimaMarcacion.tipo}`">
-                  {{ ultimaMarcacion.titulo }}
-                </span>
-                <h1 class="feedback-student-name">
-                  {{ ultimaMarcacion.nombres }} {{ ultimaMarcacion.apellidos }}
+              <div class="welcome-text-group">
+                <h1 v-if="ultimaMarcacion.tipo === 'exito'" class="welcome-title">
+                  ¡Bienvenido, {{ ultimaMarcacion.nombreCompleto }}!
                 </h1>
-                <div class="feedback-details-row">
-                  <div class="feedback-detail-item">
-                    <span class="detail-label">Hora Registrada</span>
-                    <span class="detail-value">{{ ultimaMarcacion.hora }}</span>
-                  </div>
-                  <div class="feedback-detail-item">
-                    <span class="detail-label">Estado Asignado</span>
-                    <span class="detail-value status-highlight" :class="ultimaMarcacion.estado.toLowerCase()">
-                      {{ ultimaMarcacion.estado }}
-                    </span>
-                  </div>
-                </div>
-                <p class="feedback-friendly-msg">{{ ultimaMarcacion.mensaje }}</p>
+                <h1 v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" class="welcome-title">
+                  Hola, {{ ultimaMarcacion.nombreCompleto }}
+                </h1>
+                <h1 v-else class="welcome-title">
+                  Huella no reconocida
+                </h1>
+
+                <p class="welcome-subtitle">
+                  <span v-if="ultimaMarcacion.tipo === 'exito'">✅ Asistencia registrada correctamente</span>
+                  <span v-else-if="ultimaMarcacion.tipo === 'ya_registrado'">Tu asistencia ya fue registrada el día de hoy</span>
+                  <span v-else>Coloque su dedo firmemente e intente de nuevo</span>
+                </p>
               </div>
             </div>
           </transition>
@@ -580,47 +549,10 @@ const porcentajeAsistencia = computed(() => {
               <p class="instruction-subtitle">
                 {{
                   sesionActiva
-                    ? 'Mantenga el dedo apoyado en el lector hasta escuchar o ver la confirmación.'
+                    ? 'Mantenga el dedo apoyado en el lector hasta ver la bienvenida.'
                     : 'Esperando señal de inicio del docente para activar el lector USB.'
                 }}
               </p>
-            </div>
-          </div>
-        </section>
-
-        <!-- BARRA INFERIOR CON FEED DE ASISTENCIA Y CONTADOR EN VIVO -->
-        <section class="kiosco-bottom-bar">
-          <!-- CONTADOR EN VIVO -->
-          <div class="kiosco-stats-box">
-            <div class="stat-number-pill">
-              <span class="stat-num">{{ totalPresentes }}</span>
-              <span class="stat-denom">/ {{ estudiantesFicha.length }}</span>
-            </div>
-            <div class="stat-label-box">
-              <strong>Aprendices Registrados</strong>
-              <span>{{ porcentajeAsistencia }}% de asistencia</span>
-            </div>
-          </div>
-
-          <!-- TICKER DE ÚLTIMAS MARCACIONES (PRIVACIDAD: SOLO LOS QUE YA MARCARON) -->
-          <div class="kiosco-feed-box">
-            <div class="feed-header-label">
-              <span>ÚLTIMAS MARCACIONES EN VIVO</span>
-            </div>
-            <div class="feed-items-container">
-              <div
-                v-for="item in marcacionesRecientes"
-                :key="item.id + item.hora"
-                class="feed-chip"
-                :class="item.estado === 'Tardanza' ? 'chip-tardanza' : 'chip-presente'"
-              >
-                <span class="chip-dot"></span>
-                <strong class="chip-name">{{ item.nombres }} {{ item.apellidos }}</strong>
-                <span class="chip-time">{{ item.hora }}</span>
-              </div>
-              <div v-if="marcacionesRecientes.length === 0" class="feed-empty-msg">
-                Aún no hay registros en esta sesión. Los aprendices aparecerán aquí al poner su huella.
-              </div>
             </div>
           </div>
         </section>
@@ -973,246 +905,87 @@ const porcentajeAsistencia = computed(() => {
   opacity: 0.6;
 }
 
-/* FEEDBACK CARD GRANDE */
-.kiosco-feedback-card {
+/* WELCOME CARD (LIMPIA Y ELEGANTE) */
+.kiosco-welcome-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: #0f172a;
+  border-radius: 28px;
+  padding: 48px 56px;
+  max-width: 620px;
+  width: 100%;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+  border: 2px solid #334155;
+  transition: all 0.3s ease;
+}
+
+.welcome-exito {
+  border-color: #22c55e;
+  background: linear-gradient(145deg, rgba(20, 83, 45, 0.55) 0%, #0f172a 100%);
+  box-shadow: 0 0 60px rgba(34, 197, 94, 0.4);
+}
+
+.welcome-ya_registrado {
+  border-color: #38bdf8;
+  background: linear-gradient(145deg, rgba(12, 74, 110, 0.55) 0%, #0f172a 100%);
+  box-shadow: 0 0 60px rgba(56, 189, 248, 0.4);
+}
+
+.welcome-no_reconocida {
+  border-color: #f59e0b;
+  background: linear-gradient(145deg, rgba(120, 53, 15, 0.55) 0%, #0f172a 100%);
+  box-shadow: 0 0 60px rgba(245, 158, 11, 0.4);
+}
+
+.welcome-icon-circle {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.8);
   display: flex;
   align-items: center;
-  gap: 32px;
-  background: #0f172a;
-  border-radius: 24px;
-  padding: 36px 48px;
-  max-width: 800px;
-  width: 100%;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-  border: 2px solid #334155;
+  justify-content: center;
+  margin-bottom: 20px;
+  border: 2px solid currentColor;
 }
 
-.feedback-exito {
+.welcome-exito .welcome-icon-circle {
   border-color: #22c55e;
-  background: linear-gradient(135deg, rgba(20, 83, 45, 0.5) 0%, #0f172a 100%);
-  box-shadow: 0 0 50px rgba(34, 197, 94, 0.35);
 }
 
-.feedback-ya_registrado {
+.welcome-ya_registrado .welcome-icon-circle {
   border-color: #38bdf8;
-  background: linear-gradient(135deg, rgba(12, 74, 110, 0.5) 0%, #0f172a 100%);
-  box-shadow: 0 0 50px rgba(56, 189, 248, 0.35);
 }
 
-.feedback-no_reconocida {
+.welcome-no_reconocida .welcome-icon-circle {
   border-color: #f59e0b;
-  background: linear-gradient(135deg, rgba(120, 53, 15, 0.5) 0%, #0f172a 100%);
-  box-shadow: 0 0 50px rgba(245, 158, 11, 0.35);
 }
 
-.feedback-icon-box .icon-big {
-  font-size: 72px;
+.icon-glyph {
+  font-size: 48px;
 }
 
-.feedback-content {
-  flex: 1;
+.welcome-text-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-.feedback-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  margin-bottom: 8px;
-}
-
-.badge-exito {
-  background: #22c55e;
-  color: #052e16;
-}
-
-.badge-ya_registrado {
-  background: #38bdf8;
-  color: #082f49;
-}
-
-.badge-no_reconocida {
-  background: #f59e0b;
-  color: #451a03;
-}
-
-.feedback-student-name {
-  margin: 4px 0 16px 0;
+.welcome-title {
   font-size: 32px;
   font-weight: 900;
   color: #ffffff;
+  margin: 0 0 10px 0;
   letter-spacing: -0.5px;
 }
 
-.feedback-details-row {
-  display: flex;
-  gap: 24px;
-  margin-bottom: 12px;
-  background: rgba(15, 23, 42, 0.6);
-  padding: 10px 16px;
-  border-radius: 12px;
-  width: fit-content;
-}
-
-.feedback-detail-item {
-  display: flex;
-  flex-direction: column;
-}
-
-.detail-label {
-  font-size: 11px;
-  color: #94a3b8;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-
-.detail-value {
+.welcome-subtitle {
   font-size: 16px;
-  font-weight: 700;
-  color: #f8fafc;
-}
-
-.status-highlight.presente {
-  color: #4ade80;
-}
-
-.status-highlight.tardanza {
-  color: #fbbf24;
-}
-
-.feedback-friendly-msg {
-  font-size: 13px;
   color: #cbd5e1;
   margin: 0;
-}
-
-/* BARRA INFERIOR */
-.kiosco-bottom-bar {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 20px;
-  align-items: center;
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(51, 65, 85, 0.6);
-  border-radius: 16px;
-  padding: 16px 20px;
-}
-
-.kiosco-stats-box {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  border-right: 1px solid rgba(51, 65, 85, 0.6);
-  padding-right: 20px;
-}
-
-.stat-number-pill {
-  background: #1e293b;
-  padding: 8px 14px;
-  border-radius: 12px;
-  border: 1px solid #334155;
-}
-
-.stat-num {
-  font-size: 26px;
-  font-weight: 900;
-  color: #39a900;
-}
-
-.stat-denom {
-  font-size: 14px;
-  font-weight: 700;
-  color: #64748b;
-}
-
-.stat-label-box {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-label-box strong {
-  font-size: 13px;
-  color: #f8fafc;
-}
-
-.stat-label-box span {
-  font-size: 12px;
-  color: #38bdf8;
-  font-weight: 600;
-}
-
-.kiosco-feed-box {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow: hidden;
-}
-
-.feed-header-label {
-  font-size: 11px;
-  font-weight: 800;
-  color: #64748b;
-  letter-spacing: 1px;
-}
-
-.feed-items-container {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.feed-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  white-space: nowrap;
-  animation: slideIn 0.3s ease;
-}
-
-.chip-presente {
-  background: rgba(22, 101, 52, 0.4);
-  border: 1px solid rgba(34, 197, 94, 0.4);
-  color: #bbf7d0;
-}
-
-.chip-tardanza {
-  background: rgba(161, 98, 7, 0.4);
-  border: 1px solid rgba(234, 179, 8, 0.4);
-  color: #fef08a;
-}
-
-.chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.chip-name {
-  font-weight: 700;
-}
-
-.chip-time {
-  font-size: 11px;
-  opacity: 0.8;
-}
-
-.feed-empty-msg {
-  font-size: 12px;
-  color: #64748b;
-  font-style: italic;
-}
-
-@keyframes slideIn {
-  from { transform: translateX(-20px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  font-weight: 500;
 }
 
 /* Transiciones */
