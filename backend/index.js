@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import http from 'http'
 import express from 'express'
 import cors from 'cors'
 import mongoose from 'mongoose'
@@ -11,9 +12,13 @@ import estudiantesRoutes from './routes/estudiantes.js'
 import asistenciasRoutes from './routes/asistencias.js'
 import diasFestivosRoutes from './routes/diasFestivos.js'
 import excusasRoutes from './routes/excusas.js'
+import { initSocket } from './services/socketService.js'
 
 const app = express()
+const httpServer = http.createServer(app)
 const PORT = process.env.PORT || 3000
+
+initSocket(httpServer)
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
@@ -75,7 +80,7 @@ async function iniciarServidor() {
     console.log('Admin por defecto creado')
   }
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`Backend en http://localhost:${PORT}`)
   })
 }
