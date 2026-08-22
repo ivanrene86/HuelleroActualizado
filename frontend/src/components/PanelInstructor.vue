@@ -1,7 +1,9 @@
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '../services/api.js'
 import * as XLSX from 'xlsx'
+import KioscoAsistencia from './KioscoAsistencia.vue'
+import { socket, unirseASalaFicha, salirDeSalaFicha, iniciarAsistenciaRemota, cerrarAsistenciaRemota } from '../services/socket.js'
 
 const usuarioStr = sessionStorage.getItem('user_data')
 const usuario = ref(usuarioStr ? JSON.parse(usuarioStr) : { id: '', nombre: 'Instructor', rol: 'Instructor' })
@@ -14,6 +16,11 @@ const asistenciasFicha = ref([])
 const loading = ref(true)
 const error = ref('')
 const vistaFicha = ref('asistencia')
+
+// Modo Kiosco y Control Remoto en Vivo
+const modoKioscoActivo = ref(false)
+const sesionRemotaActiva = ref(false)
+const feedEnVivoDocente = ref([])
 
 const emit = defineEmits(['cerrar-sesion'])
 
@@ -35,7 +42,66 @@ function cerrarSesion() {
 onMounted(async () => {
   await Promise.all([cargarMisFichas(), cargarDiasFestivos()])
   setTimeout(() => initFingerprintSDK(), 500)
+  iniciarSocketDocente()
 })
+
+onUnmounted(() => {
+  if (fichaSeleccionada.value?._id) {
+    salirDeSalaFicha(fichaSeleccionada.value._id)
+  }
+})
+
+function iniciarSocketDocente() {
+  socket.on('estado_sesion', ({ activa }) => {
+    sesionRemotaActiva.value = activa
+  })
+
+  socket.on('docente:nueva_marcacion', (data) => {
+    if (!data || !data.estudianteId) return
+    if (asistenciaDia.value[data.estudianteId]) {
+      asistenciaDia.value[data.estudianteId].estado = data.estado
+      asistenciaDia.value[data.estudianteId].horaMarcacion = data.hora
+    }
+    feedEnVivoDocente.value.unshift({
+      id: data.estudianteId,
+      nombre: `${data.nombres} ${data.apellidos}`,
+      hora: data.hora,
+      estado: data.estado,
+    })
+    if (feedEnVivoDocente.value.length > 8) {
+      feedEnVivoDocente.value.pop()
+    }
+    showToast(`🖐️ ${data.nombres} ${data.apellidos} marcó ${data.estado} (${data.hora})`, data.estado === 'Tardanza' ? 'warning' : 'success')
+  })
+}
+
+function iniciarSesionRemotaDocente() {
+  if (!fichaSeleccionada.value) return
+  sesionRemotaActiva.value = true
+  iniciarAsistenciaRemota({
+    fichaId: fichaSeleccionada.value._id,
+    fichaCodigo: fichaSeleccionada.value.codigoFicha,
+    nombrePrograma: fichaSeleccionada.value.nombrePrograma,
+    jornada: fichaSeleccionada.value.jornada,
+    fecha: fechaAsistencia.value,
+    instructorNombre: usuario.value.nombre || 'Instructor',
+  })
+  showToast('▶ Sesión remota iniciada: El Kiosco del aula está recibiendo huellas.', 'success')
+}
+
+function detenerSesionRemotaDocente() {
+  if (!fichaSeleccionada.value) return
+  sesionRemotaActiva.value = false
+  cerrarAsistenciaRemota(fichaSeleccionada.value._id)
+  showToast('⏹️ Sesión remota finalizada: El Kiosco del aula se ha detenido.', 'info')
+}
+
+function onKioscoAsistenciaMarcada(data) {
+  if (data?.estudianteId && asistenciaDia.value[data.estudianteId]) {
+    asistenciaDia.value[data.estudianteId].estado = data.estado
+    asistenciaDia.value[data.estudianteId].horaMarcacion = data.hora
+  }
+}
 
 const listaDiasFestivos = ref([])
 
@@ -67,8 +133,15 @@ async function cargarMisFichas() {
 }
 
 async function seleccionarFicha(ficha) {
+  if (fichaSeleccionada.value?._id) {
+    salirDeSalaFicha(fichaSeleccionada.value._id)
+  }
   fichaSeleccionada.value = ficha
   vistaFicha.value = 'asistencia'
+  feedEnVivoDocente.value = []
+  if (ficha?._id) {
+    unirseASalaFicha(ficha._id, 'docente')
+  }
   await cargarDatosFicha(ficha._id)
 }
 
@@ -1101,7 +1174,17 @@ function descargarExcel(data, nombreArchivo) {
 </script>
 
 <template>
-  <div class="panel-instructor">
+  <!-- MODO KIOSCO DE PANTALLA COMPLETA / AULA -->
+  <KioscoAsistencia
+    v-if="modoKioscoActivo && fichaSeleccionada"
+    :ficha="fichaSeleccionada"
+    :instructor="usuario"
+    :fecha="fechaAsistencia"
+    @salir-kiosco="modoKioscoActivo = false"
+    @asistencia-marcada="onKioscoAsistenciaMarcada"
+  />
+
+  <div v-else class="panel-instructor">
     <!-- Toast Notification -->
     <Transition name="toast-fade">
       <div v-if="toast.show" class="toast-notification" :class="'toast-' + toast.type">
@@ -1223,6 +1306,76 @@ function descargarExcel(data, nombreArchivo) {
         <!-- VISTA 1: TOMAR ASISTENCIA (POR DÍAS)      -->
         <!-- ========================================= -->
         <div v-if="vistaFicha === 'asistencia'" class="section-body">
+          <!-- CENTRO DE CONTROL REMOTO Y MODO KIOSCO -->
+          <div class="remote-control-panel">
+            <div class="remote-control-header">
+              <div class="remote-control-info">
+                <div class="remote-status-badge" :class="sesionRemotaActiva ? 'badge-live' : 'badge-idle'">
+                  <span class="live-dot" :class="{ 'live-dot-pulsing': sesionRemotaActiva }"></span>
+                  <span>{{ sesionRemotaActiva ? 'CLASE EN VIVO (PASE DE LISTA REMOTO ACTIVO)' : 'PASE DE LISTA REMOTO EN ESPERA' }}</span>
+                </div>
+                <p class="remote-desc">
+                  {{ sesionRemotaActiva 
+                    ? 'El Kiosco del aula está recibiendo huellas de los aprendices. Las marcaciones se sincronizan aquí en tiempo real.' 
+                    : 'Inicia el pase de lista desde este dispositivo móvil/web para activar automáticamente el lector en el computador del aula.' 
+                  }}
+                </p>
+              </div>
+
+              <div class="remote-control-actions">
+                <!-- Botón Iniciar / Finalizar Remoto -->
+                <button
+                  v-if="!sesionRemotaActiva"
+                  type="button"
+                  class="btn-remote-start"
+                  @click="iniciarSesionRemotaDocente"
+                  :disabled="jornadaInhabilitada"
+                  title="Iniciar pase de lista remoto para el aula"
+                >
+                  ▶ Iniciar Pase de Lista Remoto
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn-remote-stop"
+                  @click="detenerSesionRemotaDocente"
+                  title="Finalizar pase de lista remoto"
+                >
+                  ⏹️ Finalizar Pase de Lista
+                </button>
+
+                <!-- Botón Abrir Kiosco en este PC -->
+                <button
+                  type="button"
+                  class="btn-open-kiosk"
+                  @click="modoKioscoActivo = true"
+                  title="Abrir vista de Kiosco a pantalla completa en este PC"
+                >
+                  🖥️ Abrir Pantalla Kiosco
+                </button>
+              </div>
+            </div>
+
+            <!-- Feed en Vivo si la sesión remota está activa o hay marcaciones recientes -->
+            <div v-if="feedEnVivoDocente.length > 0" class="remote-live-feed">
+              <div class="live-feed-title">
+                <span>📡 Marcaciones Recientes en Tiempo Real:</span>
+              </div>
+              <div class="live-feed-chips">
+                <div
+                  v-for="item in feedEnVivoDocente"
+                  :key="item.id + item.hora"
+                  class="live-feed-chip"
+                  :class="item.estado === 'Tardanza' ? 'feed-tardanza' : 'feed-presente'"
+                >
+                  <span class="feed-dot"></span>
+                  <strong>{{ item.nombre }}</strong>
+                  <span class="feed-time">{{ item.hora }} ({{ item.estado }})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
               <h4>Tomar Asistencia</h4>
@@ -1470,6 +1623,72 @@ function descargarExcel(data, nombreArchivo) {
                 </tr>
               </tbody>
             </table>
+
+            <!-- VISTA MÓVIL OPTIMIZADA: TARJETAS TÁCTILES -->
+            <div class="mobile-student-cards">
+              <div
+                v-for="est in estudiantesFicha"
+                :key="'mob_' + est._id"
+                class="mobile-student-card"
+                :class="{
+                  'mob-card-presente': asistenciaDia[est._id]?.estado === 'Presente',
+                  'mob-card-tardanza': asistenciaDia[est._id]?.estado === 'Tardanza',
+                  'mob-card-excusada': asistenciaDia[est._id]?.excusa,
+                  'mob-card-inhabilitada': jornadaInhabilitada,
+                }"
+              >
+                <div class="mob-card-header">
+                  <div class="mob-avatar">
+                    {{ (est.nombres?.[0] || 'A') + (est.apellidos?.[0] || '') }}
+                  </div>
+                  <div class="mob-info">
+                    <strong class="mob-name">{{ est.nombres }} {{ est.apellidos }}</strong>
+                    <span class="mob-doc">{{ est.tipoDocumento }} {{ est.numeroDocumento }}</span>
+                  </div>
+                  <div class="mob-status-badge">
+                    <span v-if="jornadaInhabilitada" class="badge-mob-inh">Inhabilitada</span>
+                    <span v-else-if="asistenciaDia[est._id]?.excusa" class="badge-mob-exc">Excusada</span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge-mob-pres">Presente</span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge-mob-tard">Tardanza</span>
+                    <span v-else class="badge-mob-falta">Falta</span>
+                  </div>
+                </div>
+
+                <div class="mob-card-footer">
+                  <div class="mob-time-info">
+                    <span class="time-label">Hora:</span>
+                    <span class="time-val">{{ jornadaInhabilitada ? '—' : (asistenciaDia[est._id]?.horaMarcacion || 'Sin registro') }}</span>
+                  </div>
+
+                  <div class="mob-actions-row">
+                    <!-- Botón Marcar Asistencia Táctil -->
+                    <button
+                      type="button"
+                      class="btn-mob-presente"
+                      :class="{ 'btn-mob-active': asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza' }"
+                      :disabled="asistenciaDia[est._id]?.excusa || jornadaInhabilitada"
+                      @click="marcarPresente(est._id)"
+                    >
+                      {{ (asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza') ? '✓ Marcado' : '+ Presente' }}
+                    </button>
+
+                    <!-- Botón Excusa Táctil -->
+                    <button
+                      type="button"
+                      class="btn-mob-excusa"
+                      :class="{ 'btn-mob-exc-active': asistenciaDia[est._id]?.excusa }"
+                      :disabled="jornadaInhabilitada"
+                      @click="toggleExcusa(est._id)"
+                    >
+                      {{ asistenciaDia[est._id]?.excusa ? 'Excusa ✓' : 'Excusa' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="estudiantesFicha.length === 0" class="empty-cell" style="padding: 20px; text-align: center; color: #64748b;">
+                No hay aprendices registrados en esta ficha.
+              </div>
+            </div>
           </div>
 
           <div class="action-bar" v-if="estudiantesFicha.length > 0">
@@ -2716,5 +2935,461 @@ function descargarExcel(data, nombreArchivo) {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* CENTRO DE CONTROL REMOTO Y MODO KIOSCO */
+.remote-control-panel {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border: 1.5px solid #334155;
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  color: #f8fafc;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+}
+
+.remote-control-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.remote-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.badge-live {
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid #22c55e;
+  color: #86efac;
+}
+
+.badge-idle {
+  background: rgba(148, 163, 184, 0.15);
+  border: 1px solid #64748b;
+  color: #cbd5e1;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.live-dot-pulsing {
+  background: #22c55e;
+  box-shadow: 0 0 10px #22c55e;
+  animation: pulseLive 1.5s infinite;
+}
+
+@keyframes pulseLive {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+.remote-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 0;
+  max-width: 580px;
+}
+
+.remote-control-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-remote-start {
+  background: #39a900;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(57, 169, 0, 0.3);
+  transition: all 0.2s;
+}
+
+.btn-remote-start:hover {
+  background: #2e8b00;
+}
+
+.btn-remote-stop {
+  background: #dc2626;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+  animation: pulseLive 2s infinite;
+}
+
+.btn-remote-stop:hover {
+  background: #b91c1c;
+}
+
+.btn-open-kiosk {
+  background: #0284c7;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-open-kiosk:hover {
+  background: #0369a1;
+}
+
+.remote-live-feed {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+.live-feed-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.live-feed-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.live-feed-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.feed-presente {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.feed-tardanza {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: #fde047;
+}
+
+.feed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.feed-time {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* RESPONSIVE MOBILE REFINEMENTS */
+.mobile-student-cards {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .panel-instructor {
+    padding: 10px 8px;
+  }
+
+  .instructor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+  }
+
+  .content-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Selector de fichas tipo carrusel horizontal táctil */
+  .fichas-sidebar {
+    width: 100%;
+    overflow-x: auto;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .fichas-sidebar h3 {
+    display: none;
+  }
+
+  .ficha-card {
+    min-width: 200px;
+    max-width: 240px;
+    flex-shrink: 0;
+    margin-bottom: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+
+  /* Barra de pestañas horizontales con scroll táctil */
+  .banner-actions {
+    overflow-x: auto;
+    display: flex;
+    gap: 6px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+
+  .tab-btn {
+    white-space: nowrap;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+
+  /* Panel remoto en móvil */
+  .remote-control-panel {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .remote-control-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .remote-control-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .btn-remote-start,
+  .btn-remote-stop,
+  .btn-open-kiosk {
+    width: 100%;
+    justify-content: center;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+
+  /* Ocultar tabla rígida de 6 columnas en móvil y mostrar tarjetas táctiles */
+  .data-table {
+    display: none;
+  }
+
+  .mobile-student-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mobile-student-card {
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: all 0.2s;
+  }
+
+  .mob-card-presente {
+    border-color: #86efac;
+    background: #f0fdf4;
+  }
+
+  .mob-card-tardanza {
+    border-color: #fde047;
+    background: #fefce8;
+  }
+
+  .mob-card-excusada {
+    border-color: #93c5fd;
+    background: #eff6ff;
+  }
+
+  .mob-card-inhabilitada {
+    opacity: 0.7;
+    background: #fff7ed;
+    border-color: #fdba74;
+  }
+
+  .mob-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .mob-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: #1e293b;
+    font-weight: 800;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .mob-card-presente .mob-avatar {
+    background: #22c55e;
+    color: white;
+  }
+
+  .mob-card-tardanza .mob-avatar {
+    background: #eab308;
+    color: white;
+  }
+
+  .mob-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mob-name {
+    font-size: 14px;
+    color: #0f172a;
+    font-weight: 700;
+  }
+
+  .mob-doc {
+    font-size: 12px;
+    color: #64748b;
+  }
+
+  .mob-status-badge span {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 12px;
+  }
+
+  .badge-mob-pres { background: #dcfce7; color: #166534; }
+  .badge-mob-tard { background: #fef9c3; color: #854d0e; }
+  .badge-mob-falta { background: #fee2e2; color: #991b1b; }
+  .badge-mob-exc { background: #dbeafe; color: #1e40af; }
+  .badge-mob-inh { background: #ffedd5; color: #9a3412; }
+
+  .mob-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px solid #f1f5f9;
+  }
+
+  .mob-time-info {
+    font-size: 12px;
+    color: #64748b;
+  }
+
+  .time-val {
+    font-weight: 700;
+    color: #334155;
+    margin-left: 3px;
+  }
+
+  .mob-actions-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn-mob-presente {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .btn-mob-presente.btn-mob-active {
+    background: #16a34a;
+    color: white;
+    border-color: #15803d;
+  }
+
+  .btn-mob-excusa {
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .btn-mob-excusa.btn-mob-exc-active {
+    background: #2563eb;
+    color: white;
+    border-color: #1d4ed8;
+  }
+
+  /* Conteo chips en móvil */
+  .conteo-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .conteo-chip {
+    padding: 6px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .section-header-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .day-nav-bar {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 </style>

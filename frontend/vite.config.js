@@ -4,4 +4,8 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  server: {
+    host: true, // Permite conexiones desde la red local y túneles de VS Code
+    port: 5173,
+  },
 })
