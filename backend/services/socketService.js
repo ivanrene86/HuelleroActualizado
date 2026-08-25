@@ -1,7 +1,10 @@
 import { Server } from 'socket.io'
+import bcryptjs from 'bcryptjs'
+import Dispositivo from '../models/Dispositivo.js'
 
 let io = null
 const sesionesActivas = new Map() // fichaId -> { activa: true, iniciadoPor, fecha, jornada, fichaCodigo, nombrePrograma }
+const dispositivosConectados = new Map() // deviceId -> socket.id
 
 export function initSocket(httpServer) {
   io = new Server(httpServer, {
@@ -78,7 +81,42 @@ export function initSocket(httpServer) {
       io.to(room).emit('estado_sesion', { activa: false, sesion: null })
     })
 
-    // 5. El Kiosco registra una huella y notifica en vivo a todos (móvil del docente)
+    // 5. Registro de identidad del huellero local (deviceId + token) al conectar
+    socket.on('HELLO', async (data) => {
+      const deviceId = data?.deviceId
+      const token = data?.token
+      if (!deviceId || !token) {
+        console.log(`[Socket.IO] HELLO rechazado: faltan deviceId o token (socket ${socket.id})`)
+        socket.disconnect(true)
+        return
+      }
+
+      try {
+        const dispositivo = await Dispositivo.findOne({ deviceId: String(deviceId) })
+
+        if (!dispositivo || dispositivo.activo !== true) {
+          console.log(`[Socket.IO] HELLO rechazado: dispositivo no encontrado o inactivo (${deviceId}, socket ${socket.id})`)
+          socket.disconnect(true)
+          return
+        }
+
+        const tokenValido = await bcryptjs.compare(token, dispositivo.tokenHash)
+        if (!tokenValido) {
+          console.log(`[Socket.IO] HELLO rechazado: token inválido para ${deviceId} (socket ${socket.id})`)
+          socket.disconnect(true)
+          return
+        }
+
+        socket.data.deviceId = String(deviceId)
+        dispositivosConectados.set(String(deviceId), socket.id)
+        console.log(`[Socket.IO] Huellero registrado: ${deviceId} (socket ${socket.id})`)
+      } catch (err) {
+        console.log(`[Socket.IO] HELLO rechazado por error: ${deviceId} (socket ${socket.id}) - ${err.message}`)
+        socket.disconnect(true)
+      }
+    })
+
+    // 6. El Kiosco registra una huella y notifica en vivo a todos (móvil del docente)
     socket.on('kiosco:asistencia_marcada', (data) => {
       const { fichaId } = data
       if (!fichaId) return
@@ -91,6 +129,9 @@ export function initSocket(httpServer) {
     })
 
     socket.on('disconnect', () => {
+      if (socket.data.deviceId) {
+        dispositivosConectados.delete(String(socket.data.deviceId))
+      }
       console.log(`[Socket.IO] Cliente desconectado: ${socket.id}`)
     })
   })
@@ -107,4 +148,12 @@ export function emitirNuevaAsistencia(fichaId, data) {
   if (io && fichaId) {
     io.to(`ficha_${fichaId}`).emit('docente:nueva_marcacion', data)
   }
+}
+
+export function emitirActivacion(deviceId, payload) {
+  if (!io || !deviceId) return false
+  const socketId = dispositivosConectados.get(String(deviceId))
+  if (!socketId) return false
+  io.to(socketId).emit('ACTIVATE', payload)
+  return true
 }
