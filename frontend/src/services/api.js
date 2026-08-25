@@ -1,4 +1,20 @@
-const BASE = 'http://localhost:3000/api'
+function getBaseUrl() {
+  if (typeof window === 'undefined') return 'http://localhost:3000/api'
+  
+  const host = window.location.hostname
+  const protocol = window.location.protocol
+  const fullHost = window.location.host
+  
+  // Si se usa VS Code Port Forwarding / Dev Tunnels (ej: abc-5173.use.devtunnels.ms)
+  if (fullHost.includes('-5173.')) {
+    return `${protocol}//${fullHost.replace('-5173.', '-3000.')}/api`
+  }
+  
+  // Si se accede por IP local (ej: 192.168.1.15) o localhost
+  return `${protocol}//${host}:3000/api`
+}
+
+const BASE = getBaseUrl()
 
 async function request(url, options = {}) {
   const res = await fetch(`${BASE}${url}`, {
@@ -87,6 +103,8 @@ export default {
     create(body) { return request('/asistencias', { method: 'POST', body: JSON.stringify(body) }) },
     inhabilitarJornada(body) { return request('/asistencias/inhabilitar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
     reactivarJornada(body) { return request('/asistencias/reactivar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
+    downloadSqliteUrl() { return `${BASE}/asistencias/sqlite/download` },
+    syncAllSqlite() { return request('/asistencias/sqlite/sync-all', { method: 'POST' }) },
   },
 
   excusas: {

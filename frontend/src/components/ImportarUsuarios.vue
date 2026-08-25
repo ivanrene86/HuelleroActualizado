@@ -132,7 +132,7 @@ function validarFila(row) {
       errs.push(`Jornada inválida: "${row.Jornada}". Debe ser Mañana, Tarde o Noche`)
     }
   } else {
-    if (row.Tipo_Doc && !['CC', 'CE', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) {
+    if (row.Tipo_Doc && !['CC', 'TI', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) {
       errs.push(`Tipo_Doc inválido: "${row.Tipo_Doc}". Debe ser CC, CE o PEP`)
     }
     if (row.Correo && !row.Correo.includes('@')) {

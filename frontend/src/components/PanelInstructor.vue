@@ -1,7 +1,9 @@
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '../services/api.js'
 import * as XLSX from 'xlsx'
+import KioscoAsistencia from './KioscoAsistencia.vue'
+import { socket, unirseASalaFicha, salirDeSalaFicha, iniciarAsistenciaRemota, cerrarAsistenciaRemota } from '../services/socket.js'
 
 const usuarioStr = sessionStorage.getItem('user_data')
 const usuario = ref(usuarioStr ? JSON.parse(usuarioStr) : { id: '', nombre: 'Instructor', rol: 'Instructor' })
@@ -14,6 +16,11 @@ const asistenciasFicha = ref([])
 const loading = ref(true)
 const error = ref('')
 const vistaFicha = ref('asistencia')
+
+// Modo Kiosco y Control Remoto en Vivo
+const modoKioscoActivo = ref(false)
+const sesionRemotaActiva = ref(false)
+const feedEnVivoDocente = ref([])
 
 const emit = defineEmits(['cerrar-sesion'])
 
@@ -33,9 +40,78 @@ function cerrarSesion() {
 }
 
 onMounted(async () => {
-  await cargarMisFichas()
+  await Promise.all([cargarMisFichas(), cargarDiasFestivos()])
   setTimeout(() => initFingerprintSDK(), 500)
+  iniciarSocketDocente()
 })
+
+onUnmounted(() => {
+  if (fichaSeleccionada.value?._id) {
+    salirDeSalaFicha(fichaSeleccionada.value._id)
+  }
+})
+
+function iniciarSocketDocente() {
+  socket.on('estado_sesion', ({ activa }) => {
+    sesionRemotaActiva.value = activa
+  })
+
+  socket.on('docente:nueva_marcacion', (data) => {
+    if (!data || !data.estudianteId) return
+    if (asistenciaDia.value[data.estudianteId]) {
+      asistenciaDia.value[data.estudianteId].estado = data.estado
+      asistenciaDia.value[data.estudianteId].horaMarcacion = data.hora
+    }
+    feedEnVivoDocente.value.unshift({
+      id: data.estudianteId,
+      nombre: `${data.nombres} ${data.apellidos}`,
+      hora: data.hora,
+      estado: data.estado,
+    })
+    if (feedEnVivoDocente.value.length > 8) {
+      feedEnVivoDocente.value.pop()
+    }
+    showToast(`🖐️ ${data.nombres} ${data.apellidos} marcó ${data.estado} (${data.hora})`, data.estado === 'Tardanza' ? 'warning' : 'success')
+  })
+}
+
+function iniciarSesionRemotaDocente() {
+  if (!fichaSeleccionada.value) return
+  sesionRemotaActiva.value = true
+  iniciarAsistenciaRemota({
+    fichaId: fichaSeleccionada.value._id,
+    fichaCodigo: fichaSeleccionada.value.codigoFicha,
+    nombrePrograma: fichaSeleccionada.value.nombrePrograma,
+    jornada: fichaSeleccionada.value.jornada,
+    fecha: fechaAsistencia.value,
+    instructorNombre: usuario.value.nombre || 'Instructor',
+  })
+  showToast('▶ Sesión remota iniciada: El Kiosco del aula está recibiendo huellas.', 'success')
+}
+
+function detenerSesionRemotaDocente() {
+  if (!fichaSeleccionada.value) return
+  sesionRemotaActiva.value = false
+  cerrarAsistenciaRemota(fichaSeleccionada.value._id)
+  showToast('⏹️ Sesión remota finalizada: El Kiosco del aula se ha detenido.', 'info')
+}
+
+function onKioscoAsistenciaMarcada(data) {
+  if (data?.estudianteId && asistenciaDia.value[data.estudianteId]) {
+    asistenciaDia.value[data.estudianteId].estado = data.estado
+    asistenciaDia.value[data.estudianteId].horaMarcacion = data.hora
+  }
+}
+
+const listaDiasFestivos = ref([])
+
+async function cargarDiasFestivos() {
+  try {
+    listaDiasFestivos.value = await api.diasFestivos.getAll()
+  } catch (e) {
+    console.error('Error al cargar dias festivos:', e)
+  }
+}
 
 async function cargarMisFichas() {
   loading.value = true
@@ -57,8 +133,15 @@ async function cargarMisFichas() {
 }
 
 async function seleccionarFicha(ficha) {
+  if (fichaSeleccionada.value?._id) {
+    salirDeSalaFicha(fichaSeleccionada.value._id)
+  }
   fichaSeleccionada.value = ficha
   vistaFicha.value = 'asistencia'
+  feedEnVivoDocente.value = []
+  if (ficha?._id) {
+    unirseASalaFicha(ficha._id, 'docente')
+  }
   await cargarDatosFicha(ficha._id)
 }
 
@@ -98,9 +181,22 @@ async function cargarDatosFicha(fichaId) {
 // =============================================
 // TOMA DE ASISTENCIA Y GESTIÓN DE JORNADA
 // =============================================
+function getHoyLocalISO() {
+  const ahora = new Date()
+  const year = ahora.getFullYear()
+  const month = String(ahora.getMonth() + 1).padStart(2, '0')
+  const day = String(ahora.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const fechaHoyMax = computed(() => getHoyLocalISO())
+const fechaAsistencia = ref(getHoyLocalISO())
 const asistenciaDia = ref({})
 const guardandoAsistencia = ref(false)
-const fechaAsistencia = ref(new Date().toISOString().split('T')[0])
+
+const esFechaActualOHoy = computed(() => {
+  return fechaAsistencia.value >= fechaHoyMax.value
+})
 
 // Estado de inhabilitación de jornada
 const showInhabilitarModal = ref(false)
@@ -108,14 +204,49 @@ const motivoInhabilitar = ref('Reunión institucional / Actividad SENA')
 const motivoInhabilitarOtro = ref('')
 const inhabilitando = ref(false)
 
+const esDomingo = computed(() => {
+  if (!fechaAsistencia.value) return false
+  const [y, m, d] = fechaAsistencia.value.split('-').map(Number)
+  const dt = new Date(y, m - 1, d, 12, 0, 0)
+  return dt.getDay() === 0
+})
+
+const diaFestivoOInhabilitado = computed(() => {
+  const fecha = fechaAsistencia.value
+  const ficha = fichaSeleccionada.value
+  if (!ficha) return null
+  const fichaId = String(ficha._id)
+  const jornada = ficha.jornada
+
+  return (listaDiasFestivos.value || []).find(d => {
+    if (d.fecha !== fecha) return false
+    if (!d.fichasAplicables || d.fichasAplicables === 'todas') return true
+    if (d.fichasAplicables === 'jornada') {
+      return Array.isArray(d.jornadasSeleccionadas) && d.jornadasSeleccionadas.includes(jornada)
+    }
+    if (d.fichasAplicables === 'especificas') {
+      return (d.fichasSeleccionadas || []).some(f => String(f._id || f) === fichaId)
+    }
+    return false
+  })
+})
+
 const jornadaInhabilitada = computed(() => {
   const hoy = fechaAsistencia.value
-  const registrosHoy = asistenciasFicha.value.filter(a => a.fecha === hoy)
-  return registrosHoy.length > 0 && registrosHoy.some(a => a.estado === 'Inhabilitada')
+  if (esDomingo.value) return true
+  const porAsistencia = asistenciasFicha.value.some(a => a.fecha === hoy && a.estado === 'Inhabilitada')
+  return porAsistencia || !!diaFestivoOInhabilitado.value
 })
 
 const motivoInhabilitacionDia = computed(() => {
   const hoy = fechaAsistencia.value
+  if (esDomingo.value) {
+    return 'Domingo — Día no laboral institucional'
+  }
+  if (diaFestivoOInhabilitado.value) {
+    const d = diaFestivoOInhabilitado.value
+    return d.descripcion ? `${d.motivo} — ${d.descripcion}` : d.motivo
+  }
   const reg = asistenciasFicha.value.find(a => a.fecha === hoy && a.estado === 'Inhabilitada')
   return reg?.motivoInhabilitacion || 'Jornada no impartida'
 })
@@ -124,16 +255,38 @@ function cambiarFechaDia(delta) {
   const [y, m, d] = fechaAsistencia.value.split('-').map(Number)
   const dt = new Date(y, m - 1, d)
   dt.setDate(dt.getDate() + delta)
-  fechaAsistencia.value = dt.toISOString().split('T')[0]
+  const year = dt.getFullYear()
+  const month = String(dt.getMonth() + 1).padStart(2, '0')
+  const day = String(dt.getDate()).padStart(2, '0')
+  const nuevaFecha = `${year}-${month}-${day}`
+
+  if (nuevaFecha > fechaHoyMax.value) {
+    showToast('No es posible consultar ni gestionar fechas futuras.', 'warning')
+    fechaAsistencia.value = fechaHoyMax.value
+  } else {
+    fechaAsistencia.value = nuevaFecha
+  }
+  inicializarAsistenciaDia()
+}
+
+function onFechaChange() {
+  if (fechaAsistencia.value > fechaHoyMax.value) {
+    showToast('No es posible consultar ni gestionar fechas futuras.', 'warning')
+    fechaAsistencia.value = fechaHoyMax.value
+  }
   inicializarAsistenciaDia()
 }
 
 function irAHoy() {
-  fechaAsistencia.value = new Date().toISOString().split('T')[0]
+  fechaAsistencia.value = fechaHoyMax.value
   inicializarAsistenciaDia()
 }
 
 function abrirModalInhabilitar() {
+  if (fechaAsistencia.value > fechaHoyMax.value) {
+    showToast('No es posible inhabilitar fechas futuras.', 'warning')
+    return
+  }
   motivoInhabilitar.value = 'Reunión institucional / Actividad SENA'
   motivoInhabilitarOtro.value = ''
   showInhabilitarModal.value = true
@@ -142,18 +295,35 @@ function abrirModalInhabilitar() {
 async function confirmarInhabilitarJornada() {
   inhabilitando.value = true
   const motivoFinal = motivoInhabilitar.value === 'Otro' ? (motivoInhabilitarOtro.value.trim() || 'Jornada no impartida') : motivoInhabilitar.value
+  const fecha = fechaAsistencia.value
+  showInhabilitarModal.value = false
   try {
     await api.asistencias.inhabilitarJornada({
       fichaId: fichaSeleccionada.value._id,
-      fecha: fechaAsistencia.value,
+      fecha: fecha,
       motivo: motivoFinal,
       instructorId: usuario.value.id || null,
     })
+
+    // Actualización inmediata en memoria para reactividad instantánea
+    asistenciasFicha.value = asistenciasFicha.value.filter(a => a.fecha !== fecha)
+    for (const est of estudiantesFicha.value) {
+      asistenciasFicha.value.push({
+        estudianteId: est,
+        fichaId: fichaSeleccionada.value._id,
+        fecha: fecha,
+        estado: 'Inhabilitada',
+        hora: '—',
+        motivoInhabilitacion: motivoFinal,
+      })
+    }
+    inicializarAsistenciaDia()
+
     await cargarDatosFicha(fichaSeleccionada.value._id)
-    showInhabilitarModal.value = false
-    showToast(`🚫 Sesión del ${fechaAsistencia.value} inhabilitada correctamente.`, 'info')
+    showToast(`🚫 Sesión del ${fecha} inhabilitada correctamente.`, 'info')
   } catch (err) {
     showToast('Error al inhabilitar jornada: ' + err.message, 'error')
+    await cargarDatosFicha(fichaSeleccionada.value._id)
   } finally {
     inhabilitando.value = false
   }
@@ -161,13 +331,19 @@ async function confirmarInhabilitarJornada() {
 
 async function reactivarJornada() {
   inhabilitando.value = true
+  const fecha = fechaAsistencia.value
   try {
     await api.asistencias.reactivarJornada({
       fichaId: fichaSeleccionada.value._id,
-      fecha: fechaAsistencia.value,
+      fecha: fecha,
     })
+
+    // Limpiar en memoria inmediatamente
+    asistenciasFicha.value = asistenciasFicha.value.filter(a => !(a.fecha === fecha && a.estado === 'Inhabilitada'))
+    inicializarAsistenciaDia()
+
     await cargarDatosFicha(fichaSeleccionada.value._id)
-    showToast(`🟢 Sesión del ${fechaAsistencia.value} reactivada exitosamente.`, 'success')
+    showToast(`🟢 Sesión del ${fecha} reactivada exitosamente.`, 'success')
   } catch (err) {
     showToast('Error al reactivar jornada: ' + err.message, 'error')
   } finally {
@@ -314,6 +490,10 @@ function toggleExcusa(estId) {
 async function guardarAsistenciaDia() {
   if (jornadaInhabilitada.value) {
     showToast('Esta sesión ya se encuentra guardada como inhabilitada.', 'info')
+    return
+  }
+  if (fechaAsistencia.value > fechaHoyMax.value) {
+    showToast('No es posible registrar ni finalizar asistencias en fechas futuras.', 'warning')
     return
   }
   guardandoAsistencia.value = true
@@ -686,8 +866,7 @@ async function procesarVerificacionAsistencia(imageBase64) {
 }
 
 // =============================================
-// ENROLAMIENTO DE HUELLAS (Solo Líder)
-// ENROLAMIENTO DE HUELLAS (Solo Líder) - SDK REAL
+// ENROLAMIENTO DE HUELLAS - SDK REAL
 // =============================================
 const showEnrolarModal = ref(false)
 const estudianteTarget = ref(null)
@@ -695,8 +874,11 @@ const pasoEnrolamiento = ref(1)
 const capturasCompletadas = ref(0)
 const enrolando = ref(false)
 const enrollmentSessionId = ref(null)
-const sdkDisponible = ref(false)
 const dedoSeleccionado = ref('indice_derecho')
+
+const sdkDisponible = computed(() => {
+  return !!(lectorConectado.value && !sdkCargando.value)
+})
 
 const DEDOS = [
   { value: 'pulgar_derecho', label: 'Pulgar Derecho' },
@@ -710,6 +892,125 @@ const DEDOS = [
   { value: 'anular_izquierdo', label: 'Anular Izquierdo' },
   { value: 'menique_izquierdo', label: 'Meñique Izquierdo' },
 ]
+
+function abrirModalEnrolamiento(estudiante) {
+  estudianteTarget.value = estudiante
+  pasoEnrolamiento.value = 1
+  capturasCompletadas.value = 0
+  enrolando.value = false
+  dedoSeleccionado.value = estudiante.dedoEnrolado || 'indice_derecho'
+  modoCaptura = 'enrolamiento'
+  showEnrolarModal.value = true
+  verificarEstadoLectorUSB()
+}
+
+async function iniciarEnrolamientoReal() {
+  if (!lectorConectado.value) {
+    showToast('El lector de huellas USB no está conectado.', 'error')
+    return
+  }
+  if (!estudianteTarget.value) return
+
+  enrolando.value = true
+  pasoEnrolamiento.value = 2
+  capturasCompletadas.value = 0
+  modoCaptura = 'enrolamiento'
+
+  try {
+    const nombre = `${estudianteTarget.value.nombres} ${estudianteTarget.value.apellidos}`
+    const doc = `${estudianteTarget.value.tipoDocumento} ${estudianteTarget.value.numeroDocumento}`
+    const res = await api.estudiantes.fingerprint.enrollStart(
+      estudianteTarget.value._id,
+      nombre,
+      doc,
+      dedoSeleccionado.value
+    )
+
+    if (!res.success && res.error) {
+      throw new Error(res.error)
+    }
+
+    enrollmentSessionId.value = res.sessionId
+    showToast('🖐️ Coloque el dedo en el lector para la primera muestra...', 'info')
+    iniciarCapturaSDK()
+  } catch (err) {
+    enrolando.value = false
+    pasoEnrolamiento.value = 1
+    showToast('Error al iniciar enrolamiento: ' + err.message, 'error')
+  }
+}
+
+async function enviarCapturaAlBackend(imageBase64) {
+  if (!enrolando.value || !enrollmentSessionId.value || pasoEnrolamiento.value !== 2) return
+
+  try {
+    const res = await api.estudiantes.fingerprint.enrollCapture(
+      enrollmentSessionId.value,
+      imageBase64
+    )
+
+    if (res.error) {
+      throw new Error(res.error)
+    }
+
+    const numMuestras = res.captures || (capturasCompletadas.value + 1)
+    capturasCompletadas.value = numMuestras
+
+    // Si el SDK indica que ya tiene suficientes muestras (ready=true) o se alcanzaron 4 muestras:
+    if (res.ready || numMuestras >= 4) {
+      // 1. Detener inmediatamente el sensor USB para evitar lecturas adicionales
+      detenerCapturaSDK()
+      enrolando.value = false
+
+      // 2. Completar enrolamiento en el servidor con validación de no-duplicado
+      try {
+        const compRes = await api.estudiantes.fingerprint.enrollComplete(enrollmentSessionId.value)
+        if (compRes.success) {
+          pasoEnrolamiento.value = 3
+          showToast(`✅ ¡Huella enrolada exitosamente para ${estudianteTarget.value.nombres}!`, 'success')
+          await cargarDatosFicha(fichaSeleccionada.value._id)
+        } else {
+          throw new Error(compRes.error || 'Error al guardar plantilla biométrica')
+        }
+      } catch (compErr) {
+        pasoEnrolamiento.value = 1
+        capturasCompletadas.value = 0
+        showToast(compErr.message, 'error')
+      }
+    } else {
+      showToast(`🖐️ Muestra ${numMuestras} de 4 registrada. Levante y coloque el dedo nuevamente...`, 'info')
+      setTimeout(() => {
+        if (enrolando.value && showEnrolarModal.value && pasoEnrolamiento.value === 2) {
+          iniciarCapturaSDK()
+        }
+      }, 700)
+    }
+  } catch (err) {
+    console.error('Error al procesar muestra:', err)
+    showToast('⚠️ Muestra no válida: ' + err.message + '. Intente de nuevo.', 'warning')
+    setTimeout(() => {
+      if (enrolando.value && showEnrolarModal.value && pasoEnrolamiento.value === 2) {
+        iniciarCapturaSDK()
+      }
+    }, 1000)
+  }
+}
+
+async function cancelarEnrolamiento() {
+  detenerCapturaSDK()
+  if (enrollmentSessionId.value) {
+    try {
+      await api.estudiantes.fingerprint.enrollCancel(enrollmentSessionId.value)
+    } catch (e) {}
+  }
+  enrolando.value = false
+  showEnrolarModal.value = false
+  estudianteTarget.value = null
+  pasoEnrolamiento.value = 1
+  capturasCompletadas.value = 0
+  enrollmentSessionId.value = null
+  modoCaptura = 'asistencia'
+}
 
 
 // =============================================
@@ -831,6 +1132,22 @@ function exportarListaEstudiantes() {
   descargarExcel(data, `Estudiantes_${fichaSeleccionada.value.codigoFicha}`)
 }
 
+function descargarSQLite() {
+  try {
+    const url = api.asistencias.downloadSqliteUrl()
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'asistencias_institucion.sqlite'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    showToast('💾 Descargando base de datos SQLite institucional...', 'success')
+  } catch (err) {
+    console.error('Error al descargar SQLite:', err)
+    showToast('Error al descargar SQLite: ' + err.message, 'error')
+  }
+}
+
 function descargarExcel(data, nombreArchivo) {
   if (data.length === 0) {
     showToast('No hay datos para exportar', 'warning')
@@ -857,7 +1174,17 @@ function descargarExcel(data, nombreArchivo) {
 </script>
 
 <template>
-  <div class="panel-instructor">
+  <!-- MODO KIOSCO DE PANTALLA COMPLETA / AULA -->
+  <KioscoAsistencia
+    v-if="modoKioscoActivo && fichaSeleccionada"
+    :ficha="fichaSeleccionada"
+    :instructor="usuario"
+    :fecha="fechaAsistencia"
+    @salir-kiosco="modoKioscoActivo = false"
+    @asistencia-marcada="onKioscoAsistenciaMarcada"
+  />
+
+  <div v-else class="panel-instructor">
     <!-- Toast Notification -->
     <Transition name="toast-fade">
       <div v-if="toast.show" class="toast-notification" :class="'toast-' + toast.type">
@@ -949,27 +1276,21 @@ function descargarExcel(data, nombreArchivo) {
             >
               ✏️ Historial
             </button>
-            <!-- BOTÓN GESTIONAR ESTUDIANTES: Exclusivo para Docente Líder -->
+            <!-- BOTÓN GESTIONAR ESTUDIANTES -->
             <button
               class="tab-btn"
-              :class="{ active: vistaFicha === 'gestionar_estudiantes', disabled: !fichaSeleccionada.esLider }"
-              :disabled="!fichaSeleccionada.esLider"
-              @click="fichaSeleccionada.esLider && (vistaFicha = 'gestionar_estudiantes')"
-              :title="!fichaSeleccionada.esLider ? 'Gestionar estudiantes requiere ser Docente Líder' : ''"
+              :class="{ active: vistaFicha === 'gestionar_estudiantes' }"
+              @click="vistaFicha = 'gestionar_estudiantes'"
             >
               📝 Gestionar Estudiantes
-              <span v-if="!fichaSeleccionada.esLider" class="lock-icon">🔒</span>
             </button>
-            <!-- BOTÓN DE ENROLAMIENTO: Exclusivo para Docente Líder -->
+            <!-- BOTÓN DE ENROLAMIENTO -->
             <button
               class="tab-btn"
-              :class="{ active: vistaFicha === 'enrolar_huella', disabled: !fichaSeleccionada.esLider }"
-              :disabled="!fichaSeleccionada.esLider"
-              @click="fichaSeleccionada.esLider && (vistaFicha = 'enrolar_huella')"
-              :title="!fichaSeleccionada.esLider ? 'El enrolamiento de huellas requiere ser Docente Líder de la Ficha' : ''"
+              :class="{ active: vistaFicha === 'enrolar_huella' }"
+              @click="vistaFicha = 'enrolar_huella'"
             >
               ☝️ Enrolar Huellas
-              <span v-if="!fichaSeleccionada.esLider" class="lock-icon">🔒</span>
             </button>
             <button
               class="tab-btn"
@@ -985,6 +1306,76 @@ function descargarExcel(data, nombreArchivo) {
         <!-- VISTA 1: TOMAR ASISTENCIA (POR DÍAS)      -->
         <!-- ========================================= -->
         <div v-if="vistaFicha === 'asistencia'" class="section-body">
+          <!-- CENTRO DE CONTROL REMOTO Y MODO KIOSCO -->
+          <div class="remote-control-panel">
+            <div class="remote-control-header">
+              <div class="remote-control-info">
+                <div class="remote-status-badge" :class="sesionRemotaActiva ? 'badge-live' : 'badge-idle'">
+                  <span class="live-dot" :class="{ 'live-dot-pulsing': sesionRemotaActiva }"></span>
+                  <span>{{ sesionRemotaActiva ? 'CLASE EN VIVO (PASE DE LISTA REMOTO ACTIVO)' : 'PASE DE LISTA REMOTO EN ESPERA' }}</span>
+                </div>
+                <p class="remote-desc">
+                  {{ sesionRemotaActiva 
+                    ? 'El Kiosco del aula está recibiendo huellas de los aprendices. Las marcaciones se sincronizan aquí en tiempo real.' 
+                    : 'Inicia el pase de lista desde este dispositivo móvil/web para activar automáticamente el lector en el computador del aula.' 
+                  }}
+                </p>
+              </div>
+
+              <div class="remote-control-actions">
+                <!-- Botón Iniciar / Finalizar Remoto -->
+                <button
+                  v-if="!sesionRemotaActiva"
+                  type="button"
+                  class="btn-remote-start"
+                  @click="iniciarSesionRemotaDocente"
+                  :disabled="jornadaInhabilitada"
+                  title="Iniciar pase de lista remoto para el aula"
+                >
+                  ▶ Iniciar Pase de Lista Remoto
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn-remote-stop"
+                  @click="detenerSesionRemotaDocente"
+                  title="Finalizar pase de lista remoto"
+                >
+                  ⏹️ Finalizar Pase de Lista
+                </button>
+
+                <!-- Botón Abrir Kiosco en este PC -->
+                <button
+                  type="button"
+                  class="btn-open-kiosk"
+                  @click="modoKioscoActivo = true"
+                  title="Abrir vista de Kiosco a pantalla completa en este PC"
+                >
+                  🖥️ Abrir Pantalla Kiosco
+                </button>
+              </div>
+            </div>
+
+            <!-- Feed en Vivo si la sesión remota está activa o hay marcaciones recientes -->
+            <div v-if="feedEnVivoDocente.length > 0" class="remote-live-feed">
+              <div class="live-feed-title">
+                <span>📡 Marcaciones Recientes en Tiempo Real:</span>
+              </div>
+              <div class="live-feed-chips">
+                <div
+                  v-for="item in feedEnVivoDocente"
+                  :key="item.id + item.hora"
+                  class="live-feed-chip"
+                  :class="item.estado === 'Tardanza' ? 'feed-tardanza' : 'feed-presente'"
+                >
+                  <span class="feed-dot"></span>
+                  <strong>{{ item.nombre }}</strong>
+                  <span class="feed-time">{{ item.hora }} ({{ item.estado }})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="section-header-row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
               <h4>Tomar Asistencia</h4>
@@ -993,7 +1384,29 @@ function descargarExcel(data, nombreArchivo) {
             
             <!-- Controles de Navegación por Días e Inhabilitación -->
             <div class="section-header-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-              <div class="day-nav-bar" style="display: inline-flex; align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 3px 6px;">
+              <!-- Botón Biometría Huella -->
+              <button
+                v-if="!verificandoHuella"
+                type="button"
+                class="btn-biometric"
+                @click="iniciarVerificacionHuella"
+                :disabled="jornadaInhabilitada"
+                :title="jornadaInhabilitada ? 'La sesión está inhabilitada. Reactívela para usar el lector.' : 'Iniciar toma de asistencia con lector biométrico'"
+              >
+                ☝️ Iniciar Biometría
+              </button>
+              <button
+                v-else
+                type="button"
+                class="btn-biometric-stop"
+                @click="detenerVerificacionHuella"
+                title="Detener lector biométrico"
+              >
+                ⏹️ Detener Biometría
+              </button>
+
+              <!-- Barra de Navegación por Días -->
+              <div class="day-nav-bar" :class="{ 'nav-day-inhabilitada': jornadaInhabilitada }" style="display: inline-flex; align-items: center; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 3px 6px;">
                 <button
                   type="button"
                   class="btn-nav-day"
@@ -1006,16 +1419,31 @@ function descargarExcel(data, nombreArchivo) {
                 <input
                   type="date"
                   v-model="fechaAsistencia"
-                  @change="inicializarAsistenciaDia"
+                  :max="fechaHoyMax"
+                  @change="onFechaChange"
                   class="input-fecha"
-                  style="border: none; background: transparent; font-weight: 600; font-size: 13px; color: #1e293b; padding: 4px 6px; outline: none;"
+                  title="Seleccionar fecha (Solo hoy o días anteriores)"
+                  style="border: none; background: transparent; font-weight: 600; font-size: 13px; color: #1e293b; padding: 4px 6px; outline: none; cursor: pointer;"
                 />
+                <span v-if="jornadaInhabilitada" style="font-size: 11px; background: #ea580c; color: white; padding: 2px 6px; border-radius: 6px; font-weight: 700; margin-right: 4px;">
+                  🚫 Inhabilitada
+                </span>
                 <button
                   type="button"
                   class="btn-nav-day"
+                  :disabled="esFechaActualOHoy"
                   @click="cambiarFechaDia(1)"
-                  title="Día Siguiente"
-                  style="background: transparent; border: none; font-size: 13px; font-weight: 700; color: #475569; padding: 5px 8px; cursor: pointer; border-radius: 4px;"
+                  :title="esFechaActualOHoy ? 'No puedes avanzar a días futuros' : 'Día Siguiente'"
+                  :style="{
+                    background: 'transparent',
+                    border: 'none',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    color: esFechaActualOHoy ? '#cbd5e1' : '#475569',
+                    padding: '5px 8px',
+                    cursor: esFechaActualOHoy ? 'not-allowed' : 'pointer',
+                    borderRadius: '4px'
+                  }"
                 >
                   ▶
                 </button>
@@ -1023,8 +1451,19 @@ function descargarExcel(data, nombreArchivo) {
                   type="button"
                   class="btn-today"
                   @click="irAHoy"
+                  :disabled="fechaAsistencia === fechaHoyMax"
                   title="Ir al día de hoy"
-                  style="background: #e2e8f0; border: none; font-size: 11px; font-weight: 700; color: #334155; padding: 4px 8px; margin-left: 4px; border-radius: 4px; cursor: pointer;"
+                  :style="{
+                    background: fechaAsistencia === fechaHoyMax ? '#f1f5f9' : '#e2e8f0',
+                    border: 'none',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: fechaAsistencia === fechaHoyMax ? '#94a3b8' : '#334155',
+                    padding: '4px 8px',
+                    marginLeft: '4px',
+                    borderRadius: '4px',
+                    cursor: fechaAsistencia === fechaHoyMax ? 'default' : 'pointer'
+                  }"
                 >
                   Hoy
                 </button>
@@ -1036,6 +1475,7 @@ function descargarExcel(data, nombreArchivo) {
                 type="button"
                 class="btn-inhabilitar-action"
                 @click="abrirModalInhabilitar"
+                :disabled="fechaAsistencia > fechaHoyMax"
                 title="Inhabilitar la toma de asistencia para esta jornada"
                 style="background: #fff1f2; border: 1.5px solid #fecdd3; color: #e11d48; font-weight: 600; padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"
               >
@@ -1055,23 +1495,27 @@ function descargarExcel(data, nombreArchivo) {
             </div>
           </div>
 
-          <!-- Banner destacado si la jornada está inhabilitada -->
-          <div v-if="jornadaInhabilitada" style="background: #fff7ed; border: 1.5px solid #fdba74; color: #9a3412; padding: 14px 18px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-            <div>
-              <div style="font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px;">
-                🚫 Sesión Inhabilitada para el {{ fechaAsistencia }}
+          <!-- HUD Card de Día Inhabilitado -->
+          <div v-if="jornadaInhabilitada" class="hud-inhabilitado-card">
+            <div class="hud-inhabilitado-icon">🚫</div>
+            <div class="hud-inhabilitado-content">
+              <div class="hud-inhabilitado-title">
+                <span>JORNADA INHABILITADA</span>
+                <span class="hud-inhabilitado-fecha">{{ fechaAsistencia }}</span>
               </div>
-              <div style="font-size: 13px; color: #c2410c; margin-top: 3px;">
-                Motivo: <strong>{{ motivoInhabilitacionDia }}</strong> — Los aprendices no registran fallas injustificadas en esta fecha.
+              <div class="hud-inhabilitado-motivo">
+                📌 <strong>Motivo registrado:</strong> {{ motivoInhabilitacionDia }}
+              </div>
+              <div class="hud-inhabilitado-desc">
+                ℹ️ La toma de asistencia para este día se encuentra suspendida. Los aprendices no acumulan fallas injustificadas ni penalizaciones.
               </div>
             </div>
             <button
-              class="btn btn-sm btn-success"
+              class="btn btn-reactivar-hud"
               @click="reactivarJornada"
               :disabled="inhabilitando"
-              style="padding: 6px 14px; font-size: 12px; font-weight: 700;"
             >
-              🟢 Reactivar Sesión
+              🟢 {{ inhabilitando ? '⏳ Reactivando...' : 'Reactivar Jornada' }}
             </button>
           </div>
 
@@ -1094,8 +1538,8 @@ function descargarExcel(data, nombreArchivo) {
 
           <!-- Contadores rápidos -->
           <div class="conteo-row">
-            <div v-if="jornadaInhabilitada" class="conteo-chip" style="background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; font-weight: 700;">
-              🚫 Sesión Inhabilitada ({{ conteoAsistencia.Inhabilitada }} aprendices sin penalización)
+            <div v-if="jornadaInhabilitada" class="conteo-chip" style="background: #ffedd5; color: #9a3412; border: 1.5px solid #fdba74; font-weight: 700;">
+              🚫 Sesión Inhabilitada ({{ conteoAsistencia.Inhabilitada }} aprendices protegidos sin falta)
             </div>
             <template v-else>
               <div class="conteo-chip conteo-presente">✅ Presentes: {{ conteoAsistencia.Presente }}</div>
@@ -1109,77 +1553,156 @@ function descargarExcel(data, nombreArchivo) {
             ⏰ <strong>Cálculo Automático de Tardanza:</strong> Al marcar a un aprendiz como <strong>Presente</strong>, se captura la hora exacta. Si supera los 15 minutos de inicio de jornada ({{ fichaSeleccionada.jornada }}), se asignará automáticamente como <strong>Tardanza</strong>. Quienes queden sin marcar se registrarán como <strong>Falta</strong> al finalizar la jornada.
           </div>
 
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Aprendiz</th>
-                <th>Documento</th>
-                <th>Marcar Presente</th>
-                <th>Excusa (F2F)</th>
-                <th>Hora Marcación</th>
-                <th>Estado Asignado</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="est in estudiantesFicha" :key="est._id"
-                  :class="{ 'row-excusada': asistenciaDia[est._id]?.excusa, 'row-disabled': jornadaInhabilitada }">
-                <td><strong>{{ est.nombres }} {{ est.apellidos }}</strong></td>
-                <td>{{ est.tipoDocumento }} {{ est.numeroDocumento }}</td>
-                <td class="td-radio">
-                  <label class="checkbox-label">
-                    <input
-                      type="checkbox"
-                      :checked="asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza'"
+          <!-- Contenedor de la Tabla con estilo Disabled/Overlay si la jornada está inhabilitada -->
+          <div :class="{ 'table-inhabilitada-overlay': jornadaInhabilitada }">
+            <div v-if="jornadaInhabilitada" class="watermark-inhabilitada-bar">
+              🔒 SESIÓN INHABILITADA — Los controles de marcado se encuentran pausados para este día
+            </div>
+
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Aprendiz</th>
+                  <th>Documento</th>
+                  <th>Marcar Presente</th>
+                  <th>Excusa (F2F)</th>
+                  <th>Hora Marcación</th>
+                  <th>Estado Asignado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="est in estudiantesFicha" :key="est._id"
+                    :class="{ 'row-excusada': asistenciaDia[est._id]?.excusa, 'row-disabled': jornadaInhabilitada }">
+                  <td><strong>{{ est.nombres }} {{ est.apellidos }}</strong></td>
+                  <td>{{ est.tipoDocumento }} {{ est.numeroDocumento }}</td>
+                  <td class="td-radio">
+                    <label class="checkbox-label" :style="jornadaInhabilitada ? 'cursor: not-allowed; opacity: 0.5;' : ''">
+                      <input
+                        type="checkbox"
+                        :checked="asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza'"
+                        :disabled="asistenciaDia[est._id]?.excusa || jornadaInhabilitada"
+                        @change="marcarPresente(est._id)"
+                      />
+                      <span class="checkbox-custom radio-presente"></span>
+                    </label>
+                  </td>
+                  <td class="td-radio">
+                    <label class="checkbox-label" :style="jornadaInhabilitada ? 'cursor: not-allowed; opacity: 0.5;' : ''">
+                      <input
+                        type="checkbox"
+                        :checked="asistenciaDia[est._id]?.excusa"
+                        :disabled="jornadaInhabilitada"
+                        @change="toggleExcusa(est._id)"
+                      />
+                      <span class="checkbox-custom"></span>
+                    </label>
+                  </td>
+                  <td style="font-size: 12px; font-weight: 600; color: #475569;">
+                    {{ jornadaInhabilitada ? '—' : (asistenciaDia[est._id]?.horaMarcacion || '—') }}
+                  </td>
+                  <td>
+                    <span v-if="jornadaInhabilitada" class="badge" style="background: #fed7aa; color: #9a3412; font-weight: 700; border: 1px solid #f97316;">
+                      🚫 Inhabilitada
+                    </span>
+                    <span v-else-if="asistenciaDia[est._id]?.excusa" class="badge badge-warning">
+                      📋 Excusada
+                    </span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge badge-success">
+                      ✅ Presente (A tiempo)
+                    </span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge badge-warning">
+                      ⏰ Tardanza ({{ asistenciaDia[est._id]?.tiempoTardanza || '1 hora' }})
+                    </span>
+                    <span v-else class="badge badge-danger">
+                      ❌ Falta (Automática)
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="estudiantesFicha.length === 0">
+                  <td colspan="6" class="empty-cell">No hay aprendices registrados en esta ficha.</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- VISTA MÓVIL OPTIMIZADA: TARJETAS TÁCTILES -->
+            <div class="mobile-student-cards">
+              <div
+                v-for="est in estudiantesFicha"
+                :key="'mob_' + est._id"
+                class="mobile-student-card"
+                :class="{
+                  'mob-card-presente': asistenciaDia[est._id]?.estado === 'Presente',
+                  'mob-card-tardanza': asistenciaDia[est._id]?.estado === 'Tardanza',
+                  'mob-card-excusada': asistenciaDia[est._id]?.excusa,
+                  'mob-card-inhabilitada': jornadaInhabilitada,
+                }"
+              >
+                <div class="mob-card-header">
+                  <div class="mob-avatar">
+                    {{ (est.nombres?.[0] || 'A') + (est.apellidos?.[0] || '') }}
+                  </div>
+                  <div class="mob-info">
+                    <strong class="mob-name">{{ est.nombres }} {{ est.apellidos }}</strong>
+                    <span class="mob-doc">{{ est.tipoDocumento }} {{ est.numeroDocumento }}</span>
+                  </div>
+                  <div class="mob-status-badge">
+                    <span v-if="jornadaInhabilitada" class="badge-mob-inh">Inhabilitada</span>
+                    <span v-else-if="asistenciaDia[est._id]?.excusa" class="badge-mob-exc">Excusada</span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge-mob-pres">Presente</span>
+                    <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge-mob-tard">Tardanza</span>
+                    <span v-else class="badge-mob-falta">Falta</span>
+                  </div>
+                </div>
+
+                <div class="mob-card-footer">
+                  <div class="mob-time-info">
+                    <span class="time-label">Hora:</span>
+                    <span class="time-val">{{ jornadaInhabilitada ? '—' : (asistenciaDia[est._id]?.horaMarcacion || 'Sin registro') }}</span>
+                  </div>
+
+                  <div class="mob-actions-row">
+                    <!-- Botón Marcar Asistencia Táctil -->
+                    <button
+                      type="button"
+                      class="btn-mob-presente"
+                      :class="{ 'btn-mob-active': asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza' }"
                       :disabled="asistenciaDia[est._id]?.excusa || jornadaInhabilitada"
-                      @change="marcarPresente(est._id)"
-                    />
-                    <span class="checkbox-custom radio-presente"></span>
-                  </label>
-                </td>
-                <td class="td-radio">
-                  <label class="checkbox-label">
-                    <input
-                      type="checkbox"
-                      :checked="asistenciaDia[est._id]?.excusa"
+                      @click="marcarPresente(est._id)"
+                    >
+                      {{ (asistenciaDia[est._id]?.estado === 'Presente' || asistenciaDia[est._id]?.estado === 'Tardanza') ? '✓ Marcado' : '+ Presente' }}
+                    </button>
+
+                    <!-- Botón Excusa Táctil -->
+                    <button
+                      type="button"
+                      class="btn-mob-excusa"
+                      :class="{ 'btn-mob-exc-active': asistenciaDia[est._id]?.excusa }"
                       :disabled="jornadaInhabilitada"
-                      @change="toggleExcusa(est._id)"
-                    />
-                    <span class="checkbox-custom"></span>
-                  </label>
-                </td>
-                <td style="font-size: 12px; font-weight: 600; color: #475569;">
-                  {{ jornadaInhabilitada ? '—' : (asistenciaDia[est._id]?.horaMarcacion || '—') }}
-                </td>
-                <td>
-                  <span v-if="jornadaInhabilitada" class="badge" style="background: #fed7aa; color: #9a3412; font-weight: 700;">
-                    🚫 Inhabilitada
-                  </span>
-                  <span v-else-if="asistenciaDia[est._id]?.excusa" class="badge badge-warning">
-                    📋 Excusada
-                  </span>
-                  <span v-else-if="asistenciaDia[est._id]?.estado === 'Presente'" class="badge badge-success">
-                    ✅ Presente (A tiempo)
-                  </span>
-                  <span v-else-if="asistenciaDia[est._id]?.estado === 'Tardanza'" class="badge badge-warning">
-                    ⏰ Tardanza ({{ asistenciaDia[est._id]?.tiempoTardanza || '1 hora' }})
-                  </span>
-                  <span v-else class="badge badge-danger">
-                    ❌ Falta (Automática)
-                  </span>
-                </td>
-              </tr>
-              <tr v-if="estudiantesFicha.length === 0">
-                <td colspan="6" class="empty-cell">No hay aprendices registrados en esta ficha.</td>
-              </tr>
-            </tbody>
-          </table>
+                      @click="toggleExcusa(est._id)"
+                    >
+                      {{ asistenciaDia[est._id]?.excusa ? 'Excusa ✓' : 'Excusa' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="estudiantesFicha.length === 0" class="empty-cell" style="padding: 20px; text-align: center; color: #64748b;">
+                No hay aprendices registrados en esta ficha.
+              </div>
+            </div>
+          </div>
 
           <div class="action-bar" v-if="estudiantesFicha.length > 0">
             <button class="btn-export" @click="exportarAsistenciaDia" title="Exportar lista del día a Excel">
               📥 Exportar Excel
             </button>
+            <button class="btn-export" @click="descargarSQLite" title="Descargar archivo SQLite único para el servidor institucional">
+              💾 Descargar SQLite (.sqlite)
+            </button>
+            <div v-if="jornadaInhabilitada" style="display: flex; align-items: center; gap: 8px; color: #c2410c; font-weight: 700; font-size: 13px; background: #fff7ed; border: 1px solid #fdba74; padding: 8px 14px; border-radius: 8px;">
+              🚫 Sesión Inhabilitada — Guardada en MongoDB y SQLite
+            </div>
             <button
-              v-if="!jornadaInhabilitada"
+              v-else
               class="btn btn-primary btn-guardar"
               @click="guardarAsistenciaDia"
               :disabled="guardandoAsistencia"
@@ -1198,9 +1721,14 @@ function descargarExcel(data, nombreArchivo) {
               <h4>Historial de Asistencias</h4>
               <p class="section-desc">Registros de asistencia de esta ficha:</p>
             </div>
-            <button class="btn-export" @click="exportarHistorial" v-if="asistenciasFicha.length > 0">
-              📥 Exportar Historial Excel
-            </button>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="btn-export" @click="descargarSQLite" title="Descargar archivo SQLite acumulativo institucional">
+                💾 Descargar SQLite (.sqlite)
+              </button>
+              <button class="btn-export" @click="exportarHistorial" v-if="asistenciasFicha.length > 0">
+                📥 Exportar Historial Excel
+              </button>
+            </div>
           </div>
 
           <table class="data-table">
@@ -1233,14 +1761,14 @@ function descargarExcel(data, nombreArchivo) {
         </div>
 
         <!-- ========================================= -->
-        <!-- VISTA 4: GESTIONAR ESTUDIANTES (LÍDER)    -->
+        <!-- VISTA 4: GESTIONAR ESTUDIANTES            -->
         <!-- ========================================= -->
         <div v-if="vistaFicha === 'gestionar_estudiantes'" class="section-body">
-          <div v-if="fichaSeleccionada.esLider">
+          <div>
             <div class="section-header-row">
               <div>
-                <h4>👑 Gestionar Datos de Aprendices</h4>
-                <p class="section-desc">Edita la información general de los aprendices de la Ficha {{ fichaSeleccionada.codigoFicha }}:</p>
+                <h4>📝 Gestionar Datos de Aprendices</h4>
+                <p class="section-desc">Información y edición de los aprendices de la Ficha {{ fichaSeleccionada.codigoFicha }}:</p>
               </div>
               <button class="btn-export" @click="exportarListaEstudiantes" v-if="estudiantesFicha.length > 0">
                 📥 Exportar Lista Excel
@@ -1281,16 +1809,13 @@ function descargarExcel(data, nombreArchivo) {
               </tbody>
             </table>
           </div>
-          <div v-else class="restricted-box">
-            🔒 <strong>Acceso Restringido:</strong> La gestión de datos de aprendices está reservada para el <strong>Docente Líder</strong> de la Ficha.
-          </div>
         </div>
 
         <!-- ========================================= -->
-        <!-- VISTA 5: ENROLAMIENTO DE HUELLAS (LÍDER)  -->
+        <!-- VISTA 5: ENROLAMIENTO DE HUELLAS          -->
         <!-- ========================================= -->
         <div v-if="vistaFicha === 'enrolar_huella'" class="section-body">
-          <div v-if="fichaSeleccionada.esLider">
+          <div>
             <h4>☝️ Panel de Enrolamiento Biométrico de Huellas</h4>
             <p class="section-desc">Gestiona el registro de plantillas de huellas dactilares para los aprendices de la Ficha {{ fichaSeleccionada.codigoFicha }}:</p>
 
@@ -1349,9 +1874,6 @@ function descargarExcel(data, nombreArchivo) {
                 </tr>
               </tbody>
             </table>
-          </div>
-          <div v-else class="restricted-box">
-            🔒 <strong>Acceso Restringido:</strong> El enrolamiento biométrico de huellas está reservado exclusivamente para el <strong>Docente Líder</strong> de la Ficha.
           </div>
         </div>
 
@@ -2295,5 +2817,579 @@ function descargarExcel(data, nombreArchivo) {
   background: #fee2e2;
   color: #991b1b;
   border: 1px solid #fca5a5;
+}
+
+/* ===== HUD JORNADA INHABILITADA ===== */
+.hud-inhabilitado-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  border: 2px solid #ea580c;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 16px rgba(234, 88, 12, 0.15);
+  animation: fadeIn 0.3s ease;
+  flex-wrap: wrap;
+}
+
+.hud-inhabilitado-icon {
+  font-size: 38px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  background: #ffedd5;
+  border-radius: 50%;
+  border: 2px solid #fdba74;
+}
+
+.hud-inhabilitado-content {
+  flex: 1;
+  min-width: 250px;
+}
+
+.hud-inhabilitado-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #9a3412;
+  letter-spacing: 0.5px;
+}
+
+.hud-inhabilitado-fecha {
+  background: #ea580c;
+  color: #ffffff;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hud-inhabilitado-motivo {
+  margin-top: 5px;
+  font-size: 13px;
+  color: #7c2d12;
+  font-weight: 600;
+}
+
+.hud-inhabilitado-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9a3412;
+  opacity: 0.95;
+}
+
+.btn-reactivar-hud {
+  background: #16a34a;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-reactivar-hud:hover:not(:disabled) {
+  background: #15803d;
+  transform: translateY(-1px);
+}
+
+.table-inhabilitada-overlay {
+  position: relative;
+  opacity: 0.75;
+  filter: grayscale(30%);
+  user-select: none;
+}
+
+.watermark-inhabilitada-bar {
+  background: #fed7aa;
+  border: 1.5px dashed #ea580c;
+  color: #9a3412;
+  text-align: center;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 1px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.nav-day-inhabilitada {
+  border-color: #ea580c !important;
+  background: #fff7ed !important;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* CENTRO DE CONTROL REMOTO Y MODO KIOSCO */
+.remote-control-panel {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border: 1.5px solid #334155;
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  color: #f8fafc;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+}
+
+.remote-control-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.remote-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.badge-live {
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid #22c55e;
+  color: #86efac;
+}
+
+.badge-idle {
+  background: rgba(148, 163, 184, 0.15);
+  border: 1px solid #64748b;
+  color: #cbd5e1;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.live-dot-pulsing {
+  background: #22c55e;
+  box-shadow: 0 0 10px #22c55e;
+  animation: pulseLive 1.5s infinite;
+}
+
+@keyframes pulseLive {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+.remote-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 0;
+  max-width: 580px;
+}
+
+.remote-control-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-remote-start {
+  background: #39a900;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(57, 169, 0, 0.3);
+  transition: all 0.2s;
+}
+
+.btn-remote-start:hover {
+  background: #2e8b00;
+}
+
+.btn-remote-stop {
+  background: #dc2626;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+  animation: pulseLive 2s infinite;
+}
+
+.btn-remote-stop:hover {
+  background: #b91c1c;
+}
+
+.btn-open-kiosk {
+  background: #0284c7;
+  color: white;
+  border: none;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-open-kiosk:hover {
+  background: #0369a1;
+}
+
+.remote-live-feed {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(71, 85, 105, 0.5);
+}
+
+.live-feed-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.live-feed-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.live-feed-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.feed-presente {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.feed-tardanza {
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: #fde047;
+}
+
+.feed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.feed-time {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* RESPONSIVE MOBILE REFINEMENTS */
+.mobile-student-cards {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .panel-instructor {
+    padding: 10px 8px;
+  }
+
+  .instructor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+  }
+
+  .content-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* Selector de fichas tipo carrusel horizontal táctil */
+  .fichas-sidebar {
+    width: 100%;
+    overflow-x: auto;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .fichas-sidebar h3 {
+    display: none;
+  }
+
+  .ficha-card {
+    min-width: 200px;
+    max-width: 240px;
+    flex-shrink: 0;
+    margin-bottom: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+
+  /* Barra de pestañas horizontales con scroll táctil */
+  .banner-actions {
+    overflow-x: auto;
+    display: flex;
+    gap: 6px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+  }
+
+  .tab-btn {
+    white-space: nowrap;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+
+  /* Panel remoto en móvil */
+  .remote-control-panel {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .remote-control-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .remote-control-actions {
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .btn-remote-start,
+  .btn-remote-stop,
+  .btn-open-kiosk {
+    width: 100%;
+    justify-content: center;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+
+  /* Ocultar tabla rígida de 6 columnas en móvil y mostrar tarjetas táctiles */
+  .data-table {
+    display: none;
+  }
+
+  .mobile-student-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mobile-student-card {
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: all 0.2s;
+  }
+
+  .mob-card-presente {
+    border-color: #86efac;
+    background: #f0fdf4;
+  }
+
+  .mob-card-tardanza {
+    border-color: #fde047;
+    background: #fefce8;
+  }
+
+  .mob-card-excusada {
+    border-color: #93c5fd;
+    background: #eff6ff;
+  }
+
+  .mob-card-inhabilitada {
+    opacity: 0.7;
+    background: #fff7ed;
+    border-color: #fdba74;
+  }
+
+  .mob-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .mob-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: #1e293b;
+    font-weight: 800;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .mob-card-presente .mob-avatar {
+    background: #22c55e;
+    color: white;
+  }
+
+  .mob-card-tardanza .mob-avatar {
+    background: #eab308;
+    color: white;
+  }
+
+  .mob-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mob-name {
+    font-size: 14px;
+    color: #0f172a;
+    font-weight: 700;
+  }
+
+  .mob-doc {
+    font-size: 12px;
+    color: #64748b;
+  }
+
+  .mob-status-badge span {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 12px;
+  }
+
+  .badge-mob-pres { background: #dcfce7; color: #166534; }
+  .badge-mob-tard { background: #fef9c3; color: #854d0e; }
+  .badge-mob-falta { background: #fee2e2; color: #991b1b; }
+  .badge-mob-exc { background: #dbeafe; color: #1e40af; }
+  .badge-mob-inh { background: #ffedd5; color: #9a3412; }
+
+  .mob-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px solid #f1f5f9;
+  }
+
+  .mob-time-info {
+    font-size: 12px;
+    color: #64748b;
+  }
+
+  .time-val {
+    font-weight: 700;
+    color: #334155;
+    margin-left: 3px;
+  }
+
+  .mob-actions-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .btn-mob-presente {
+    background: #f1f5f9;
+    color: #334155;
+    border: 1px solid #cbd5e1;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .btn-mob-presente.btn-mob-active {
+    background: #16a34a;
+    color: white;
+    border-color: #15803d;
+  }
+
+  .btn-mob-excusa {
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .btn-mob-excusa.btn-mob-exc-active {
+    background: #2563eb;
+    color: white;
+    border-color: #1d4ed8;
+  }
+
+  /* Conteo chips en móvil */
+  .conteo-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .conteo-chip {
+    padding: 6px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .section-header-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .day-nav-bar {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 </style>
