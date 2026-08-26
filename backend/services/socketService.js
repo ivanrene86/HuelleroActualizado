@@ -1,12 +1,15 @@
 import { Server } from 'socket.io'
 import bcryptjs from 'bcryptjs'
 import Dispositivo from '../models/Dispositivo.js'
+import Clase from '../models/Clase.js'
 
 let io = null
 const sesionesActivas = new Map() // fichaId -> { activa: true, iniciadoPor, fecha, jornada, fichaCodigo, nombrePrograma }
 const dispositivosConectados = new Map() // deviceId -> socket.id
 
 export function initSocket(httpServer) {
+  // Heartbeat: se depende del heartbeat nativo de socket.io (pingInterval 25s / pingTimeout 20s por defecto),
+  // que detecta desconexiones y reconexiones automáticamente. No se implementa un PING/PONG manual encima.
   io = new Server(httpServer, {
     cors: {
       origin: '*',
@@ -110,6 +113,22 @@ export function initSocket(httpServer) {
         socket.data.deviceId = String(deviceId)
         dispositivosConectados.set(String(deviceId), socket.id)
         console.log(`[Socket.IO] Huellero registrado: ${deviceId} (socket ${socket.id})`)
+
+        // Reenvío del ACTIVATE pendiente tras reconexión (Fase 6):
+        // si quedó una clase activa en BD para este deviceId, se la reenvía al recién conectado.
+        try {
+          const claseActiva = await Clase.findOne({ deviceId: String(deviceId), estado: 'Activa' })
+          if (claseActiva) {
+            socket.emit('ACTIVATE', {
+              type: 'ACTIVATE',
+              fichaId: String(claseActiva.fichaId),
+              instructorId: String(claseActiva.instructorId),
+            })
+            console.log(`[Socket.IO] Reenviando ACTIVATE pendiente a ${deviceId} tras reconexión (ficha ${claseActiva.fichaId})`)
+          }
+        } catch (err) {
+          console.log(`[Socket.IO] Error reenviando ACTIVATE pendiente a ${deviceId}: ${err.message}`)
+        }
       } catch (err) {
         console.log(`[Socket.IO] HELLO rechazado por error: ${deviceId} (socket ${socket.id}) - ${err.message}`)
         socket.disconnect(true)

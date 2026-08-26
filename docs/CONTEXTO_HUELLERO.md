@@ -143,7 +143,8 @@ PC Aula 03
 **Insight clave `[DECIDIDO]`:** el estado vive en la BD; el WebSocket solo *entrega* el mensaje. Si el dispositivo estaba offline al activar, la clase queda activa en BD y, cuando el dispositivo se reconecte, el backend le reenvía el comando pendiente (la reconexión no rompe nada).
 
 `[IMPLEMENTADO]` (parcial) — Modelo `Clase` (`deviceId`, `fichaId`, `instructorId`, `estado`, `iniciadaAt`, `finalizadaAt`) y endpoint `POST /api/clases/activar`, que crea/reactiva la clase y envía `ACTIVATE` por WebSocket al `deviceId` conectado.
-`[PENDIENTE]` — `finalizar` (`DEACTIVATE`), el reenvío del comando pendiente al reconectar, y las invariantes estrictas (una activa por instructor y por dispositivo).
+`[IMPLEMENTADO]` — Reenvío del `ACTIVATE` pendiente al reconectar: al recibir un `HELLO` válido, si existe una clase `Activa` en BD para ese `deviceId`, el backend reenvía `ACTIVATE` al socket recién conectado.
+`[PENDIENTE]` — `finalizar` (`DEACTIVATE`) y las invariantes estrictas (una activa por instructor y por dispositivo).
 
 # Activación remota
 
@@ -327,7 +328,7 @@ Huellero → Backend:
 ## Pendiente (stubs) `[PARCIAL]` / `[PENDIENTE]`
 
 - `capture.js` (Fase 5): `capturarHuella()` devuelve `null`; **no hay captura DigitalPersona real**.
-- `ws-client.js` (Fase 6): HELLO autenticado y recibe `ACTIVATE`, pero **sin DEACTIVATE, acks ni reenvío de pendientes al reconectar**.
+- `ws-client.js` (Fase 6): HELLO autenticado, recibe `ACTIVATE` y reconecta automáticamente (backoff 2s→30s) re-autenticando con `HELLO`; **sin DEACTIVATE ni acks**.
 - `sync.js` (Fase 10): **sincronización no implementada**.
 
 Consecuencia: `capturarYVerificar()` y el enrolamiento siempre fallan con "Captura de huella no disponible aún", porque la captura es stub y `getPlantillasFicha()` devuelve `[]`.
@@ -452,7 +453,7 @@ Huellero → Backend:
   ATTENDANCE_REGISTERED               [PENDIENTE] { fichaId, estudianteId, fecha, hora, metodo }
   ENROLL_READY / ENROLL_PROGRESS / ENROLL_COMPLETE / ENROLL_ERROR   (superados)
   SYNC_PUSH                           [PENDIENTE] { pendientes: [...] }
-  PING / PONG (heartbeat)             [PENDIENTE]
+  PING / PONG (heartbeat)             [IMPLEMENTADO] — nativo de socket.io (pingInterval 25s / pingTimeout 20s), sin PING/PONG manual
 
 Backend → Dashboard:
   CLASS_ACTIVATED / CLASS_DEACTIVATED { fichaId, instructorId }
@@ -480,7 +481,7 @@ Backend → Dashboard:
 | 3 | Configuración e identidad del dispositivo (deviceId + token) | ✅ Implementada — registro, persistencia en `config.json`, reintento |
 | 4 | Almacenamiento local (`data/*.json`) | ✅ Implementada — `store.js` persiste en disco |
 | 5 | Captura DigitalPersona | `[PENDIENTE]` — `capture.js` es stub |
-| 6 | WebSocket (cliente huellero + hub backend) | `[PARCIAL]` — HELLO autenticado + ACTIVATE; faltan DEACTIVATE/acks/heartbeat |
+| 6 | WebSocket (cliente huellero + hub backend) | `[PARCIAL]` — HELLO autenticado + ACTIVATE + reconexión con backoff + reenvío de ACTIVATE pendiente; faltan DEACTIVATE y acks |
 | 7 | Activación/desactivación remota | `[PENDIENTE]` |
 | 8 | Enrolamiento remoto | `[PENDIENTE]` |
 | 9 | Registro de asistencias | `[PENDIENTE]` |

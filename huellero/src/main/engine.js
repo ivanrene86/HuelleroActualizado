@@ -18,6 +18,7 @@ function notificarEstado() {
 
 export async function init() {
   await store.init()
+  ws.setOnStatusChange(notificarEstado)
   ws.connect(getConfig())
   syncPendientes()
   iniciarRegistroDispositivo(() => {
