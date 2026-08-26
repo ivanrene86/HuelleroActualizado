@@ -25,10 +25,22 @@ const perfil = reactive({
   estado: 'Activo',
 })
 
-const password = ref('')
-const confirmPassword = ref('')
-
 const esLiderCalculado = ref(false)
+
+// Estado del Modal de Cambio de Contraseña
+const showModalPassword = ref(false)
+const passForm = reactive({
+  actual: '',
+  nueva: '',
+  confirmar: ''
+})
+const passError = ref('')
+const passLoading = ref(false)
+const showPass = reactive({
+  actual: false,
+  nueva: false,
+  confirmar: false
+})
 
 onMounted(async () => {
   if (usuarioSesion.value) {
@@ -84,11 +96,6 @@ function showToast(message, type = 'success') {
 }
 
 async function guardarPerfil() {
-  if (password.value && password.value !== confirmPassword.value) {
-    showToast('Las contraseñas no coinciden', 'error')
-    return
-  }
-
   loading.value = true
   try {
     if (esInstructor.value && perfil.id) {
@@ -99,7 +106,6 @@ async function guardarPerfil() {
         correo: perfil.correo,
         especialidad: perfil.especialidad,
       }
-      if (password.value) body.password = password.value
 
       await api.instructores.update(perfil.id, body)
       
@@ -107,8 +113,6 @@ async function guardarPerfil() {
       const updatedUser = { ...usuarioSesion.value, nombre: `${perfil.nombres} ${perfil.apellidos}`.trim(), correo: perfil.correo }
       sessionStorage.setItem('user_data', JSON.stringify(updatedUser))
       
-      password.value = ''
-      confirmPassword.value = ''
       showToast('Perfil de instructor actualizado correctamente')
     } else {
       const body = {
@@ -116,13 +120,10 @@ async function guardarPerfil() {
         telefono: perfil.telefono,
         correo: perfil.correo,
       }
-      if (password.value) body.password = password.value
 
       const res = await api.auth.updatePerfil(body)
       if (res.ok) {
         Object.assign(perfil, res.perfil)
-        password.value = ''
-        confirmPassword.value = ''
         showToast('Perfil de administrador actualizado correctamente')
       }
     }
@@ -132,12 +133,72 @@ async function guardarPerfil() {
     loading.value = false
   }
 }
+
+// Funciones del Modal de Contraseña
+function abrirModalPassword() {
+  passForm.actual = ''
+  passForm.nueva = ''
+  passForm.confirmar = ''
+  passError.value = ''
+  showPass.actual = false
+  showPass.nueva = false
+  showPass.confirmar = false
+  showModalPassword.value = true
+}
+
+function cerrarModalPassword() {
+  showModalPassword.value = false
+  passError.value = ''
+}
+
+async function procesarCambioPassword() {
+  passError.value = ''
+  
+  if (!passForm.actual) {
+    passError.value = 'Debes ingresar tu contraseña actual.'
+    return
+  }
+  if (!passForm.nueva) {
+    passError.value = 'Debes ingresar la nueva contraseña.'
+    return
+  }
+  if (passForm.nueva.length < 6) {
+    passError.value = 'La nueva contraseña debe tener al menos 6 caracteres.'
+    return
+  }
+  if (passForm.nueva !== passForm.confirmar) {
+    passError.value = 'La confirmación de la nueva contraseña no coincide.'
+    return
+  }
+
+  passLoading.value = true
+  try {
+    const res = await api.auth.cambiarPassword({
+      id: perfil.id || usuarioSesion.value?.id,
+      rol: perfil.rol || usuarioSesion.value?.rol,
+      correo: perfil.correo || usuarioSesion.value?.correo,
+      passwordActual: passForm.actual,
+      nuevaPassword: passForm.nueva,
+    })
+
+    if (res.ok) {
+      showToast('✅ ¡Contraseña actualizada exitosamente!', 'success')
+      cerrarModalPassword()
+    } else {
+      passError.value = res.error || 'Error al actualizar contraseña'
+    }
+  } catch (err) {
+    passError.value = err.message || 'La contraseña actual no es correcta.'
+  } finally {
+    passLoading.value = false
+  }
+}
 </script>
 
 <template>
   <div class="admin-profile-page-header">
     <h1>{{ esInstructor ? '👨‍🏫 Perfil del Instructor / Maestro' : '⚙️ Perfil del Administrador' }}</h1>
-    <p>{{ esInstructor ? 'Información personal y académica del docente' : 'Gestiona tu información personal de administrador' }}</p>
+    <p>{{ esInstructor ? 'Información personal y académica del docente' : 'Gestiona tu información personal y seguridad de la cuenta' }}</p>
   </div>
 
   <!-- Vista para Instructor / Maestro -->
@@ -178,18 +239,13 @@ async function guardarPerfil() {
         <label>Número de Teléfono</label>
         <input v-model="perfil.telefono" type="tel" placeholder="+57 300 000 0000" />
       </div>
-      <div class="admin-profile-form-group">
-        <label>Nueva Contraseña</label>
-        <input v-model="password" type="password" placeholder="Dejar vacío para mantener la actual" />
-      </div>
-      <div class="admin-profile-form-group">
-        <label>Confirmar Contraseña</label>
-        <input v-model="confirmPassword" type="password" placeholder="Repite la contraseña" />
-      </div>
     </div>
-    <div style="margin-top: 24px">
+    <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
       <button class="admin-profile-button admin-profile-button-primary" @click="guardarPerfil" :disabled="loading">
         {{ loading ? 'Guardando...' : '💾 Guardar Cambios' }}
+      </button>
+      <button class="admin-profile-button admin-profile-button-security" @click="abrirModalPassword">
+        🔒 Cambiar Contraseña
       </button>
     </div>
   </div>
@@ -216,18 +272,13 @@ async function guardarPerfil() {
         <label>Correo Electrónico</label>
         <input v-model="perfil.correo" type="email" placeholder="admin@correo.com" />
       </div>
-      <div class="admin-profile-form-group">
-        <label>Nueva Contraseña</label>
-        <input v-model="password" type="password" placeholder="Dejar vacío para no cambiar" />
-      </div>
-      <div class="admin-profile-form-group">
-        <label>Confirmar Contraseña</label>
-        <input v-model="confirmPassword" type="password" placeholder="Repite la contraseña" />
-      </div>
     </div>
-    <div style="margin-top: 24px">
+    <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
       <button class="admin-profile-button admin-profile-button-primary" @click="guardarPerfil" :disabled="loading">
-        {{ loading ? 'Guardando...' : 'Guardar Cambios' }}
+        {{ loading ? 'Guardando...' : '💾 Guardar Cambios' }}
+      </button>
+      <button class="admin-profile-button admin-profile-button-security" @click="abrirModalPassword">
+        🔒 Cambiar Contraseña
       </button>
     </div>
   </div>
@@ -274,8 +325,229 @@ async function guardarPerfil() {
     </div>
   </div>
 
+  <!-- MODAL DE CAMBIO DE CONTRASEÑA -->
+  <div v-if="showModalPassword" class="password-modal-backdrop" @click.self="cerrarModalPassword">
+    <div class="password-modal-card">
+      <div class="password-modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 22px;">🔐</span>
+          <div>
+            <h3 style="margin: 0; font-size: 18px; color: #1e293b;">Actualizar Contraseña</h3>
+            <p style="margin: 2px 0 0 0; font-size: 12px; color: #64748b;">Ingresa tu contraseña actual para autorizar el cambio</p>
+          </div>
+        </div>
+        <button class="password-modal-close-btn" @click="cerrarModalPassword">✕</button>
+      </div>
+
+      <div v-if="passError" class="password-modal-error">
+        ⚠️ {{ passError }}
+      </div>
+
+      <form class="password-modal-body" @submit.prevent="procesarCambioPassword">
+        <!-- Contraseña Actual -->
+        <div class="password-input-group">
+          <label>Contraseña Actual <span style="color: #ef4444;">*</span></label>
+          <div class="password-input-wrapper">
+            <input
+              v-model="passForm.actual"
+              :type="showPass.actual ? 'text' : 'password'"
+              placeholder="Escribe tu contraseña actual"
+              required
+              autocomplete="current-password"
+            />
+            <button type="button" class="password-toggle-btn" @click="showPass.actual = !showPass.actual">
+              {{ showPass.actual ? '🙈' : '👁️' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Nueva Contraseña -->
+        <div class="password-input-group">
+          <label>Nueva Contraseña <span style="color: #ef4444;">*</span></label>
+          <div class="password-input-wrapper">
+            <input
+              v-model="passForm.nueva"
+              :type="showPass.nueva ? 'text' : 'password'"
+              placeholder="Mínimo 6 caracteres"
+              required
+              autocomplete="new-password"
+            />
+            <button type="button" class="password-toggle-btn" @click="showPass.nueva = !showPass.nueva">
+              {{ showPass.nueva ? '🙈' : '👁️' }}
+            </button>
+          </div>
+          <small style="color: #64748b; font-size: 11px;">Mínimo 6 caracteres alfanuméricos.</small>
+        </div>
+
+        <!-- Confirmar Nueva Contraseña -->
+        <div class="password-input-group">
+          <label>Confirmar Nueva Contraseña <span style="color: #ef4444;">*</span></label>
+          <div class="password-input-wrapper">
+            <input
+              v-model="passForm.confirmar"
+              :type="showPass.confirmar ? 'text' : 'password'"
+              placeholder="Repite la nueva contraseña"
+              required
+              autocomplete="new-password"
+            />
+            <button type="button" class="password-toggle-btn" @click="showPass.confirmar = !showPass.confirmar">
+              {{ showPass.confirmar ? '🙈' : '👁️' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="password-modal-actions">
+          <button type="button" class="btn btn-outline" @click="cerrarModalPassword" :disabled="passLoading">
+            Cancelar
+          </button>
+          <button type="submit" class="btn btn-primary" :disabled="passLoading">
+            {{ passLoading ? 'Verificando...' : '💾 Actualizar Contraseña' }}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div v-if="toast.show" class="admin-profile-toast" :class="'admin-profile-toast-' + toast.type">
     {{ toast.message }}
   </div>
 </template>
 
+<style scoped>
+.admin-profile-button-security {
+  background: #334155;
+  color: #ffffff;
+}
+.admin-profile-button-security:hover {
+  background: #1e293b;
+}
+
+/* MODAL DE CONTRASEÑA */
+.password-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 16px;
+}
+
+.password-modal-card {
+  background: #ffffff;
+  border-radius: 16px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  animation: modalPop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modalPop {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.password-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 22px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.password-modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #64748b;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.password-modal-close-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.password-modal-error {
+  margin: 16px 22px 0 22px;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.password-modal-body {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.password-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.password-input-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.password-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrapper input {
+  width: 100%;
+  padding: 10px 42px 10px 14px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.password-input-wrapper input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  color: #64748b;
+}
+
+.password-modal-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+</style>

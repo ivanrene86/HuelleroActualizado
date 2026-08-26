@@ -1,6 +1,6 @@
-# 🎓 Sistema de Asistencia Biométrica SENA (Huellero U.are.U 4500)
+# 🎓 Sistema de Asistencia Biométrica SENA (DigitalPersona U.are.U 4500)
 
-Sistema integral para el control y registro de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500.
+Sistema integral modular para el control, registro y reporte de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500, WebSockets en tiempo real y soporte para Modo Kiosco Autónomo de Aula.
 
 ---
 
@@ -8,53 +8,51 @@ Sistema integral para el control y registro de asistencia de aprendices e instru
 
 ```text
 HuelleroActualizado/
-├── backend/                  # Servidor API Node.js + Express + MongoDB Atlas
-│   ├── dll/                  # Librerías nativas C++ (dpfj.dll, dpfpdd.dll)
-│   ├── models/               # Modelos Mongoose (Aprendices, Fichas, Asistencia)
-│   ├── routes/               # Endpoints REST API (/api/...)
-│   ├── services/             # Lógica de comparación de minucias y correo
+├── backend/                       # ⚙️ Servidor API Node.js + Express + WebSockets + MongoDB Atlas
+│   ├── controllers/               # 🎮 Controladores de lógica HTTP y base de datos
+│   ├── middlewares/               # 🛡️ Validadores de datos y control de roles
+│   ├── models/                    # 📦 Modelos Mongoose (Aprendices, Fichas, Asistencias, Excusas)
+│   ├── routes/                    # 🛣️ Enrutadores REST API (/api/...)
+│   ├── services/                  # 🔧 Servicios de negocio (Biometría C++, SQLite, Sockets, Tardanzas)
+│   ├── dll/                       # 🔌 Librerías nativas DigitalPersona (dpfj.dll, dpfpdd.dll)
+│   ├── data/                      # 💾 Base de datos relacional SQLite de respaldo
 │   └── package.json
 │
-├── frontend/                 # Aplicación Web Vue 3 + Vite
-│   ├── public/               # Scripts Web SDK DigitalPersona
-│   ├── src/                  # Componentes Vue (PanelInstructor, Reportes, etc.)
+├── frontend/                      # 💻 Aplicación Web Reactiva (Vue 3 + Vite)
+│   ├── src/
+│   │   ├── components/            # 🖼️ Vistas (PanelInstructor, KioscoAsistencia, Reportes, Perfiles)
+│   │   ├── services/              # 📡 Clientes de API REST y WebSockets en tiempo real
+│   │   ├── utils/                 # 🧰 Validadores de formularios y formateadores de fechas/horas
+│   │   ├── assets/                # 🎨 Recursos visuales e íconos
+│   │   └── App.vue                # 🚀 Enrutamiento principal y control de sesión
+│   ├── public/                    # 📄 Scripts cliente del SDK DigitalPersona
 │   └── package.json
 │
-├── package.json              # Scripts raíz para control conjunto
-├── setup_servicios_huella.bat# Configurador automático de servicios de huella
-└── setup_huellas.bat         # Instalador y verificador de dependencias
+├── package.json                   # ⚡ Control del monorepo con un solo comando
+├── setup_servicios_huella.bat     # 🛠️ Configurador automático de servicios de huella
+└── setup_huellas.bat              # 📦 Instalador y verificador de dependencias
 ```
 
 ---
 
 ## 🚀 Inicio Rápido
 
-### 1. Iniciar el Backend (Servidor)
+### Iniciar todo el proyecto con un solo comando:
 ```bash
-cd backend
-npm install
 npm run dev
 ```
-*El servidor iniciará en `http://localhost:3000` conectado a MongoDB Atlas.*
-
-### 2. Iniciar el Frontend (Interfaz de Usuario)
-```bash
-cd frontend
-npm install
-npm run dev
-```
-*La aplicación web estará disponible en `http://localhost:5173`.*
+*Iniciará simultáneamente el **Backend** (`http://localhost:3000`) y el **Frontend** (`http://localhost:5173`).*
 
 ---
 
-## ⚡ Comandos desde la Raíz del Proyecto
-Puedes controlar ambos módulos desde la raíz:
-- `npm run dev:frontend`: Inicia el Frontend
-- `npm run dev:backend`: Inicia el Backend
-- `npm run build:frontend`: Compila el Frontend para producción
-- `npm run install:all`: Instala dependencias en Backend y Frontend
+## ⚡ Comandos Disponibles desde la Raíz:
+- `npm run dev`: Inicia Backend y Frontend en paralelo.
+- `npm run dev:frontend`: Inicia solo la interfaz de usuario.
+- `npm run dev:backend`: Inicia solo el servidor API.
+- `npm run build:frontend`: Compila el Frontend para producción.
+- `npm run install:all`: Instala todas las dependencias del proyecto.
 
 ---
 
-## 📖 Documentación de Instalación
-Para más detalles sobre cómo instalar los drivers en computadoras nuevas, consulta [`GUIA_INSTALACION.md`](./GUIA_INSTALACION.md).
+## 📖 Guía de Instalación de Drivers y Hardware
+Para configurar el lector biométrico en un computador nuevo, consulta [`GUIA_INSTALACION.md`](./GUIA_INSTALACION.md).

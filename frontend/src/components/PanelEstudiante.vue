@@ -13,6 +13,7 @@ const asistencias = ref([])
 const excusas = ref([])
 const loading = ref(true)
 const error = ref('')
+const filtroInasistencias = ref('todas') // 'todas', 'sin_excusa', 'con_excusa'
 
 const showNuevaExcusaModal = ref(false)
 const nuevaExcusa = ref({
@@ -57,14 +58,54 @@ async function cargarDatosEstudiante() {
   }
 }
 
+const horasPorJornada = computed(() => {
+  const j = (ficha.value?.jornada || '').toLowerCase()
+  if (j.includes('noche') || j.includes('nocturna')) return 4
+  return 6
+})
+
 const resumen = computed(() => {
-  let presentes = 0, retardos = 0, fallas = 0
+  let presentes = 0, tardanzas = 0, fallasSinExcusa = 0, fallasConExcusa = 0
+  const hDia = horasPorJornada.value
+
   asistencias.value.forEach(a => {
-    if (a.tipo === 'Entrada' || a.tipo === 'Presente') presentes++
-    else if (a.tipo === 'Retardo' || a.tipo === 'Tardanza') retardos++
-    else if (a.tipo === 'Falla' || a.tipo === 'Ausente') fallas++
+    const est = a.estado || a.tipo
+    if (est === 'Presente' || est === 'Entrada') presentes++
+    else if (est === 'Tardanza' || est === 'Retardo') tardanzas++
+    else if (est === 'Excusada') fallasConExcusa++
+    else if (est === 'Falta' || est === 'Ausente') fallasSinExcusa++
   })
-  return { presentes, retardos, fallas, total: asistencias.value.length }
+
+  const horasSinExcusa = fallasSinExcusa * hDia
+  const horasConExcusa = fallasConExcusa * hDia
+  const totalHorasFalladas = horasSinExcusa + horasConExcusa
+
+  return {
+    presentes,
+    tardanzas,
+    fallasSinExcusa,
+    fallasConExcusa,
+    horasSinExcusa,
+    horasConExcusa,
+    totalHorasFalladas,
+    total: asistencias.value.length
+  }
+})
+
+const asistenciasFiltradas = computed(() => {
+  if (filtroInasistencias.value === 'sin_excusa') {
+    return asistencias.value.filter(a => {
+      const est = a.estado || a.tipo
+      return est === 'Falta' || est === 'Ausente'
+    })
+  }
+  if (filtroInasistencias.value === 'con_excusa') {
+    return asistencias.value.filter(a => {
+      const est = a.estado || a.tipo
+      return est === 'Excusada'
+    })
+  }
+  return asistencias.value
 })
 
 async function radicarExcusa() {
@@ -95,7 +136,7 @@ async function radicarExcusa() {
     <div class="student-portal-header">
       <div>
         <h2>Portal del Aprendiz SENA</h2>
-        <p class="student-portal-subtitle">Consulta de Asistencias, Fichas y Excusas</p>
+        <p class="student-portal-subtitle">Consulta de Asistencias, Fichas e Inasistencias Justificadas</p>
       </div>
       <div style="display: flex; gap: 12px; align-items: center;">
         <span class="student-portal-role">Aprendiz</span>
@@ -129,7 +170,7 @@ async function radicarExcusa() {
           </div>
           <div class="student-portal-info-item">
             <span>Jornada:</span>
-            <strong>{{ ficha ? ficha.jornada : '—' }}</strong>
+            <strong>{{ ficha ? `${ficha.jornada} (${horasPorJornada}h/día)` : '—' }}</strong>
           </div>
           <div class="student-portal-info-item">
             <span>Aula:</span>
@@ -150,25 +191,59 @@ async function radicarExcusa() {
 
       <!-- Métricas y Registros -->
       <div class="student-portal-main">
-        <div class="student-portal-stats">
+        <!-- MÉTRICAS DE HORAS E INASISTENCIAS -->
+        <div class="student-portal-stats" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
           <div class="student-portal-stat student-portal-stat-present">
             <span class="student-portal-stat-number">{{ resumen.presentes }}</span>
             <span class="student-portal-stat-label">Presentes</span>
           </div>
           <div class="student-portal-stat student-portal-stat-late">
-            <span class="student-portal-stat-number">{{ resumen.retardos }}</span>
-            <span class="student-portal-stat-label">Retardos</span>
+            <span class="student-portal-stat-number">{{ resumen.tardanzas }}</span>
+            <span class="student-portal-stat-label">Tardanzas</span>
           </div>
-          <div class="student-portal-stat student-portal-stat-absent">
-            <span class="student-portal-stat-number">{{ resumen.fallas }}</span>
-            <span class="student-portal-stat-label">Fallas / Ausencias</span>
+          <div class="student-portal-stat" style="border-left: 4px solid #6366f1; background: #f8fafc; padding: 12px; border-radius: 8px;">
+            <span class="student-portal-stat-number" style="color: #4f46e5;">{{ resumen.totalHorasFalladas }}h</span>
+            <span class="student-portal-stat-label" style="font-size: 11px; font-weight: 700;">Total Horas Ausente</span>
           </div>
+          <div class="student-portal-stat student-portal-stat-absent" style="border-left: 4px solid #ef4444;">
+            <span class="student-portal-stat-number" style="color: #dc2626;">{{ resumen.horasSinExcusa }}h</span>
+            <span class="student-portal-stat-label" style="font-size: 11px; font-weight: 700;">❌ Sin Excusa</span>
+          </div>
+          <div class="student-portal-stat" style="border-left: 4px solid #0284c7; background: #f0f9ff; padding: 12px; border-radius: 8px;">
+            <span class="student-portal-stat-number" style="color: #0284c7;">{{ resumen.horasConExcusa }}h</span>
+            <span class="student-portal-stat-label" style="font-size: 11px; font-weight: 700;">📋 Con Excusa</span>
+          </div>
+        </div>
+
+        <!-- FILTROS DE HISTORIAL -->
+        <div style="margin: 16px 0; display: flex; gap: 8px; flex-wrap: wrap;">
+          <button
+            class="btn btn-sm"
+            :class="filtroInasistencias === 'todas' ? 'btn-primary' : 'btn-outline'"
+            @click="filtroInasistencias = 'todas'"
+          >
+            📊 Todo el Historial
+          </button>
+          <button
+            class="btn btn-sm"
+            :class="filtroInasistencias === 'sin_excusa' ? 'btn-danger' : 'btn-outline'"
+            @click="filtroInasistencias = 'sin_excusa'"
+          >
+            ❌ Solo Sin Excusa (Injustificadas)
+          </button>
+          <button
+            class="btn btn-sm"
+            :class="filtroInasistencias === 'con_excusa' ? 'btn-info' : 'btn-outline'"
+            @click="filtroInasistencias = 'con_excusa'"
+          >
+            📋 Solo Con Excusa (Justificadas)
+          </button>
         </div>
 
         <!-- Tabla Historial de Asistencia -->
         <div class="student-portal-card">
           <div class="student-portal-card-header">
-            <h3>Mi Historial de Asistencia</h3>
+            <h3>Mi Historial de Asistencias e Inasistencias</h3>
           </div>
           <div class="student-portal-table-container">
             <table class="student-portal-table">
@@ -176,21 +251,52 @@ async function radicarExcusa() {
                 <tr>
                   <th>Fecha</th>
                   <th>Hora</th>
-                  <th>Tipo / Registro</th>
+                  <th>Estado</th>
+                  <th>Motivo / Justificación</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="asis in asistencias" :key="asis._id">
-                  <td>{{ asis.fecha }}</td>
-                  <td>{{ asis.hora }}</td>
+                <tr v-for="asis in asistenciasFiltradas" :key="asis._id">
+                  <td><strong>{{ asis.fecha }}</strong></td>
+                  <td>{{ asis.hora || '—' }}</td>
                   <td>
-                    <span class="student-portal-badge" :class="asis.tipo === 'Entrada' || asis.tipo === 'Presente' ? 'student-portal-badge-success' : (asis.tipo === 'Retardo' ? 'student-portal-badge-warning' : 'student-portal-badge-danger')">
-                      {{ asis.tipo }}
+                    <span
+                      v-if="asis.estado === 'Presente' || asis.tipo === 'Presente'"
+                      class="student-portal-badge student-portal-badge-success"
+                    >
+                      Presente
+                    </span>
+                    <span
+                      v-else-if="asis.estado === 'Tardanza' || asis.tipo === 'Tardanza'"
+                      class="student-portal-badge student-portal-badge-warning"
+                    >
+                      Tardanza
+                    </span>
+                    <span
+                      v-else-if="asis.estado === 'Excusada'"
+                      class="student-portal-badge"
+                      style="background: #e0f2fe; color: #0369a1; font-weight: 700;"
+                    >
+                      📋 Excusada ({{ horasPorJornada }} hrs)
+                    </span>
+                    <span
+                      v-else
+                      class="student-portal-badge student-portal-badge-danger"
+                    >
+                      ❌ Falta ({{ horasPorJornada }} hrs)
                     </span>
                   </td>
+                  <td>
+                    <span v-if="asis.motivo || asis.motivoInhabilitacion" style="color: #475569; font-size: 13px;">
+                      {{ asis.motivo || asis.motivoInhabilitacion }}
+                    </span>
+                    <span v-else style="color: #94a3b8; font-size: 12px;">—</span>
+                  </td>
                 </tr>
-                <tr v-if="asistencias.length === 0">
-                  <td colspan="3" class="student-portal-empty-cell">No tienes marcas de asistencia registradas aún.</td>
+                <tr v-if="asistenciasFiltradas.length === 0">
+                  <td colspan="4" class="student-portal-empty-cell">
+                    No se encontraron registros para el filtro seleccionado.
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -201,4 +307,3 @@ async function radicarExcusa() {
     </div>
   </div>
 </template>
-

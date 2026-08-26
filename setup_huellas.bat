@@ -26,8 +26,8 @@ echo.
 
 echo [3/3] Verificando motor de huellas y dependencias nativas...
 cd /d "%ROOT_DIR%\backend"
-node -e "try { require('koffi'); console.log('  koffi (Libreria C): OK'); } catch(e) { console.log('  koffi: FALLO - ' + e.message); }"
-node -e "try { require('pngjs'); console.log('  pngjs (Procesador PNG): OK'); } catch(e) { console.log('  pngjs: FALLO - ' + e.message); }"
+node -e "import('koffi').then(() => console.log('  koffi (Libreria C): OK')).catch(e => console.log('  koffi: FALLO - ' + e.message))"
+node -e "import('pngjs').then(() => console.log('  pngjs (Procesador PNG): OK')).catch(e => console.log('  pngjs: FALLO - ' + e.message))"
 echo.
 
 echo ========================================
