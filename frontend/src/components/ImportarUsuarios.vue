@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import api from '../services/api.js'
+import './importarUsuarios.css'
 
 const toast = ref({ show: false, message: '', type: '' })
 const tipoImportacion = ref('estudiantes') // 'estudiantes', 'instructores', 'fichas'
@@ -131,7 +132,7 @@ function validarFila(row) {
       errs.push(`Jornada inválida: "${row.Jornada}". Debe ser Mañana, Tarde o Noche`)
     }
   } else {
-    if (row.Tipo_Doc && !['CC', 'CE', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) {
+    if (row.Tipo_Doc && !['CC', 'TI', 'PEP'].includes(row.Tipo_Doc.toUpperCase())) {
       errs.push(`Tipo_Doc inválido: "${row.Tipo_Doc}". Debe ser CC, CE o PEP`)
     }
     if (row.Correo && !row.Correo.includes('@')) {
@@ -398,34 +399,34 @@ function limpiarTodo() {
 </script>
 
 <template>
-  <div class="page-header">
+  <div class="import-users-page-header">
     <h1>Carga Masiva de Archivos Planos</h1>
     <p>Importación masiva mediante archivos CSV</p>
   </div>
 
   <!-- SI NO TIENE PERMISO (SI ES DOCENTE COMÚN) -->
-  <div v-if="!permisoCarga" class="card" style="border: 1.5px solid #fecdd3; background: #fff1f2;">
-    <div style="color: #9f1239; font-size: 15px;">
+  <div v-if="!permisoCarga" class="import-users-card import-users-restricted-card">
+    <div class="import-users-restricted-message">
       🔒 <strong>Acceso Restringido:</strong> La carga masiva mediante archivos planos (CSV) está reservada para el <strong>Administrador</strong> o <strong>Instructores Líderes de Ficha</strong>.
     </div>
   </div>
 
   <!-- CONFIGURACIÓN DE IMPORTACIÓN SI TIENE PERMISO -->
   <template v-else>
-    <div class="card">
-      <div class="card-header">
+    <div class="import-users-card">
+      <div class="import-users-card-header">
         <h3>Configuración de Importación</h3>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <button class="btn btn-outline btn-sm" @click="descargarPlantilla">
+        <div class="import-users-header-actions">
+          <button class="import-users-button import-users-button-outline import-users-button-small" @click="descargarPlantilla">
             📄 Descargar Plantilla de Ejemplo (.csv)
           </button>
-          <span v-if="usuario.rol === 'Instructor'" class="badge badge-success">
+          <span v-if="usuario.rol === 'Instructor'" class="import-users-badge import-users-badge-success">
             👑 Docente Líder Autorizado
           </span>
         </div>
       </div>
-      <div class="form-grid">
-        <div class="form-group">
+      <div class="import-users-form-grid">
+        <div class="import-users-form-group">
           <label>Tipo de Datos a Importar</label>
           <select v-model="tipoImportacion" :disabled="archivoNombre !== ''" @change="limpiarTodo">
             <option value="estudiantes">👨‍🎓 Estudiantes (Aprendices)</option>
@@ -433,33 +434,33 @@ function limpiarTodo() {
             <option value="fichas" v-if="usuario.rol === 'Administrador'">📋 Fichas / Programas</option>
           </select>
         </div>
-        <div class="form-group">
+        <div class="import-users-form-group">
           <label>Archivo CSV</label>
-          <div class="file-upload-wrapper">
-            <input id="archivo-input" type="file" accept=".csv" @change="procesarArchivo" class="file-input" />
-            <label for="archivo-input" class="file-label">{{ archivoNombre || 'Seleccionar archivo .csv' }}</label>
+          <div class="import-users-file-upload">
+            <input id="archivo-input" type="file" accept=".csv" @change="procesarArchivo" class="import-users-file-input" />
+            <label for="archivo-input" class="import-users-file-label">{{ archivoNombre || 'Seleccionar archivo .csv' }}</label>
           </div>
         </div>
       </div>
 
-      <div class="import-info">
+      <div class="import-users-info">
         <h4>Formato requerido del archivo CSV ({{ tipoImportacion.toUpperCase() }}):</h4>
         <p>Cabeceras obligatorias requeridas:</p>
         <code>{{ headersEsperados.join(',') }}</code>
         
-        <ul v-if="tipoImportacion === 'instructores'" style="margin-top: 10px;">
+        <ul v-if="tipoImportacion === 'instructores'" class="import-users-info-list">
           <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
           <li><strong>Ficha:</strong> Código(s) de la ficha asignada. Para que un docente dicte <strong>más de una clase / ficha</strong>, puedes separar los códigos con comas o barras (ej: <code>"2670123, 2891234"</code>) o registrar al docente en filas separadas.</li>
           <li><strong>Es_Lider:</strong> Pon <code>SI</code> si el docente es el Líder de la ficha, o <code>NO</code> si es Docente Común</li>
           <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
         </ul>
-        <ul v-else-if="tipoImportacion === 'fichas'" style="margin-top: 10px;">
+        <ul v-else-if="tipoImportacion === 'fichas'" class="import-users-info-list">
           <li><strong>Codigo_Ficha:</strong> Número identificador único de la ficha (ej. 2901122)</li>
           <li><strong>Nombre_Programa:</strong> Nombre del programa (ej. Análisis y Desarrollo de Software)</li>
           <li><strong>Jornada:</strong> Mañana, Tarde o Noche</li>
           <li><strong>Fecha_Inicio / Fecha_Fin:</strong> Formato YYYY-MM-DD (ej. 2026-02-01)</li>
         </ul>
-        <ul v-else style="margin-top: 10px;">
+        <ul v-else class="import-users-info-list">
           <li><strong>Tipo_Doc:</strong> CC, CE o PEP</li>
           <li><strong>Ficha:</strong> Código de ficha existente en el sistema</li>
           <li><strong>Jornada:</strong> Debe coincidir con la jornada de la ficha</li>
@@ -468,13 +469,13 @@ function limpiarTodo() {
     </div>
 
     <!-- ERRORES BLOQUEANTES -->
-    <div v-if="errores.length > 0" class="card">
-      <div class="card-header">
+    <div v-if="errores.length > 0" class="import-users-card">
+      <div class="import-users-card-header">
         <h3>Errores de Validación (Bloqueantes)</h3>
-        <span class="badge badge-danger">{{ errores.length }} errores</span>
+        <span class="import-users-badge import-users-badge-danger">{{ errores.length }} errores</span>
       </div>
-      <div class="table-container">
-        <table>
+      <div class="import-users-table-container">
+        <table class="import-users-table">
           <thead>
             <tr>
               <th>Línea</th>
@@ -483,14 +484,14 @@ function limpiarTodo() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(err, idx) in errores" :key="idx" class="fila-error">
+            <tr v-for="(err, idx) in errores" :key="idx" class="import-users-row-error">
               <td>{{ err.linea }}</td>
-              <td style="font-size: 12px;">
+              <td class="import-users-small-cell">
                 {{ err.datos.Codigo_Ficha || err.datos.Nombres || 'Fila ' + err.linea }} 
                 {{ err.datos.Nombre_Programa || err.datos.Apellidos || '' }}
               </td>
               <td>
-                <ul style="margin: 0; padding-left: 16px; font-size: 12px; color: #dc2626;">
+                <ul class="import-users-error-list">
                   <li v-for="(e, i) in err.errores" :key="i">{{ e }}</li>
                 </ul>
               </td>
@@ -501,13 +502,13 @@ function limpiarTodo() {
     </div>
 
     <!-- ADVERTENCIAS INFORMATIVAS DE LIDERAZGO -->
-    <div v-if="advertencias.length > 0" class="card card-warning-box">
-      <div class="card-header">
-        <h3 style="color: #92400e;">⚠️ Advertencias de Liderazgo (Opcionales)</h3>
-        <span class="badge badge-warning">{{ advertencias.length }} avisos</span>
+    <div v-if="advertencias.length > 0" class="import-users-card import-users-warning-card">
+      <div class="import-users-card-header">
+        <h3 class="import-users-warning-title">⚠️ Advertencias de Liderazgo (Opcionales)</h3>
+        <span class="import-users-badge import-users-badge-warning">{{ advertencias.length }} avisos</span>
       </div>
-      <div class="table-container">
-        <table>
+      <div class="import-users-table-container">
+        <table class="import-users-table">
           <thead>
             <tr>
               <th>Línea</th>
@@ -517,11 +518,11 @@ function limpiarTodo() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(adv, idx) in advertencias" :key="idx" class="fila-warning">
+            <tr v-for="(adv, idx) in advertencias" :key="idx" class="import-users-row-warning">
               <td><strong>{{ adv.linea }}</strong></td>
               <td>{{ adv.docente }}</td>
               <td><code>{{ adv.ficha }}</code></td>
-              <td style="color: #854d0e; font-size: 12.5px;">{{ adv.mensaje }}</td>
+              <td class="import-users-warning-cell">{{ adv.mensaje }}</td>
             </tr>
           </tbody>
         </table>
@@ -529,13 +530,13 @@ function limpiarTodo() {
     </div>
 
     <!-- REGISTROS VÁLIDOS -->
-    <div v-if="registros.length > 0 && !importado" class="card">
-      <div class="card-header">
+    <div v-if="registros.length > 0 && !importado" class="import-users-card">
+      <div class="import-users-card-header">
         <h3>Registros Válidos para Importar</h3>
-        <span class="badge badge-success">{{ registros.length }} registros</span>
+        <span class="import-users-badge import-users-badge-success">{{ registros.length }} registros</span>
       </div>
-      <div class="table-container">
-        <table>
+      <div class="import-users-table-container">
+        <table class="import-users-table">
           <thead>
             <tr v-if="tipoImportacion === 'fichas'">
               <th>Código Ficha</th><th>Nombre Programa</th><th>Jornada</th><th>Aula</th><th>Fecha Inicio</th><th>Fecha Fin</th>
@@ -555,18 +556,18 @@ function limpiarTodo() {
               <template v-else-if="tipoImportacion === 'instructores'">
                 <td>{{ r.Tipo_Doc }}</td><td>{{ r.Num_Doc }}</td><td>{{ r.Nombres }}</td><td>{{ r.Apellidos }}</td><td>{{ r.Correo }}</td><td>{{ r.Ficha }}</td>
                 <td>
-                  <span class="badge" :class="['SI', 'S', 'LIDER', 'TRUE', '1'].includes(String(r.Es_Lider).toUpperCase()) ? 'badge-success' : 'badge-neutral'">
+                  <span class="import-users-badge" :class="['SI', 'S', 'LIDER', 'TRUE', '1'].includes(String(r.Es_Lider).toUpperCase()) ? 'import-users-badge-success' : 'import-users-badge-neutral'">
                     {{ ['SI', 'S', 'LIDER', 'TRUE', '1'].includes(String(r.Es_Lider).toUpperCase()) ? '👑 Sí (Líder)' : '👤 No (Común)' }}
                   </span>
                 </td>
                 <td>
-                  <span v-if="r._infoMultificha" class="badge badge-warning" :title="r._infoMultificha" style="margin-right: 4px;">
+                  <span v-if="r._infoMultificha" class="import-users-badge import-users-badge-warning import-users-badge-spaced" :title="r._infoMultificha">
                     📚 Multi-Clase
                   </span>
-                  <span v-if="r._advertencia" class="badge badge-warning" :title="r._advertencia">
+                  <span v-if="r._advertencia" class="import-users-badge import-users-badge-warning" :title="r._advertencia">
                     ⚠️ Reemplazará Líder
                   </span>
-                  <span v-if="!r._infoMultificha && !r._advertencia" class="text-muted" style="font-size: 11px;">—</span>
+                  <span v-if="!r._infoMultificha && !r._advertencia" class="import-users-muted">—</span>
                 </td>
               </template>
               <template v-else>
@@ -575,79 +576,36 @@ function limpiarTodo() {
             </tr>
           </tbody>
         </table>
-        <p v-if="registros.length > 50" style="text-align: center; padding: 12px; color: var(--text-secondary); font-size: 13px;">
+        <p v-if="registros.length > 50" class="import-users-more-message">
           Mostrando 50 de {{ registros.length }} registros
         </p>
       </div>
-      <div style="margin-top: 16px; display: flex; gap: 12px;">
-        <button class="btn btn-primary" @click="ejecutarImportacion" :disabled="loading">
+      <div class="import-users-actions">
+        <button class="import-users-button import-users-button-primary" @click="ejecutarImportacion" :disabled="loading">
           {{ loading ? 'Importando...' : '📥 Importar ' + registros.length + ' ' + tipoImportacion.toUpperCase() }}
         </button>
-        <button class="btn btn-outline" @click="limpiarTodo">Cancelar</button>
+        <button class="import-users-button import-users-button-outline" @click="limpiarTodo">Cancelar</button>
       </div>
     </div>
 
     <!-- COMPLETADO -->
-    <div v-if="importado" class="card">
-      <div class="card-header">
+    <div v-if="importado" class="import-users-card">
+      <div class="import-users-card-header">
         <h3>Importación Completada Exitosamente</h3>
       </div>
-      <div class="import-resumen">
-        <div class="import-stat success">
-          <span class="import-stat-num">{{ registros.length }}</span>
+      <div class="import-users-summary">
+        <div class="import-users-stat import-users-stat-success">
+          <span class="import-users-stat-number">{{ registros.length }}</span>
           <span>Importados correctamente</span>
         </div>
-        <div v-if="errores.length > 0" class="import-stat error">
-          <span class="import-stat-num">{{ errores.length }}</span>
+        <div v-if="errores.length > 0" class="import-users-stat import-users-stat-error">
+          <span class="import-users-stat-number">{{ errores.length }}</span>
           <span>Con errores (omitidos)</span>
         </div>
       </div>
-      <button class="btn btn-primary" @click="limpiarTodo" style="margin-top: 16px;">Nueva Importación</button>
+      <button class="import-users-button import-users-button-primary import-users-new-action" @click="limpiarTodo">Nueva Importación</button>
     </div>
   </template>
 
-  <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
+  <div v-if="toast.show" class="import-users-toast" :class="'import-users-toast-' + toast.type">{{ toast.message }}</div>
 </template>
-
-<style scoped>
-.page-header { margin-bottom: 24px; }
-.page-header h1 { font-size: 24px; font-weight: 700; color: #1e293b; }
-.page-header p { color: #64748b; font-size: 14px; }
-.card { background: #ffffff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
-.card-warning-box { border: 1.5px solid #fef08a; background: #fffbe6; }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.card-header h3 { font-size: 16px; font-weight: 700; color: #1e293b; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
-.form-group { display: flex; flex-direction: column; gap: 6px; }
-.form-group label { font-size: 13px; font-weight: 600; color: #475569; }
-.form-group select { padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; background: #fff; }
-.file-upload-wrapper { position: relative; }
-.file-input { display: none; }
-.file-label { display: block; padding: 9px 16px; border: 2px dashed #cbd5e1; border-radius: 8px; text-align: center; color: #64748b; font-size: 14px; cursor: pointer; background: #f8fafc; transition: all 0.2s; }
-.file-label:hover { border-color: #3b82f6; color: #2563eb; background: #eff6ff; }
-.import-info { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; font-size: 13px; color: #475569; }
-.import-info h4 { font-size: 14px; margin-bottom: 8px; color: #1e293b; }
-.import-info code { display: block; background: #1e293b; color: #38bdf8; padding: 8px 12px; border-radius: 6px; font-family: monospace; margin: 8px 0; font-size: 13px; overflow-x: auto; }
-.badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-.badge-danger { background: #fee2e2; color: #991b1b; }
-.badge-success { background: #dcfce7; color: #15803d; }
-.badge-warning { background: #fef3c7; color: #92400e; }
-.badge-neutral { background: #f1f5f9; color: #64748b; }
-.table-container { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
-th { background: #f8fafc; font-weight: 600; color: #475569; }
-.fila-error { background: #fff5f5; }
-.fila-warning { background: #fefce8; }
-.btn { padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; border: none; cursor: pointer; }
-.btn-primary { background: #2563eb; color: white; }
-.btn-outline { background: white; border: 1px solid #cbd5e1; color: #475569; }
-.import-resumen { display: flex; gap: 16px; margin-top: 16px; }
-.import-stat { display: flex; flex-direction: column; align-items: center; padding: 16px 24px; border-radius: 12px; flex: 1; }
-.import-stat.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
-.import-stat.error { background: #fef2f2; border: 1px solid #fecdd3; color: #991b1b; }
-.import-stat-num { font-size: 28px; font-weight: 700; }
-.toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; font-weight: 600; color: white; z-index: 9999; }
-.toast-success { background: #16a34a; }
-.toast-error { background: #dc2626; }
-</style>
