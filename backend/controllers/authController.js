@@ -148,3 +148,59 @@ export async function resetPassword(req, res) {
     res.status(500).json({ error: err.message })
   }
 }
+
+export async function cambiarPassword(req, res) {
+  try {
+    const { id, rol, correo, passwordActual, nuevaPassword } = req.body
+    if (!passwordActual || !nuevaPassword) {
+      return res.status(400).json({ error: 'Debes ingresar tu contraseña actual y la nueva contraseña.' })
+    }
+
+    if (nuevaPassword.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' })
+    }
+
+    let usuario = null
+    const rolNormalizado = (rol || '').toLowerCase()
+
+    // 1. Buscar según rol o id/correo
+    if (rolNormalizado.includes('admin') || (!rol && !id)) {
+      if (id) usuario = await Admin.findById(id)
+      if (!usuario && correo) usuario = await Admin.findOne({ correo })
+      if (!usuario) usuario = await Admin.findOne()
+    } else if (rolNormalizado.includes('instructor')) {
+      if (id) usuario = await Instructor.findById(id)
+      if (!usuario && correo) usuario = await Instructor.findOne({ correo })
+    } else if (rolNormalizado.includes('estudiante')) {
+      if (id) usuario = await Estudiante.findById(id)
+      if (!usuario && correo) usuario = await Estudiante.findOne({ $or: [{ correo }, { numeroDocumento: correo }] })
+    } else {
+      // Búsqueda en cascada
+      if (id) {
+        usuario = await Admin.findById(id) || await Instructor.findById(id) || await Estudiante.findById(id)
+      } else if (correo) {
+        usuario = await Admin.findOne({ correo }) || await Instructor.findOne({ correo }) || await Estudiante.findOne({ correo })
+      }
+    }
+
+    if (!usuario) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' })
+    }
+
+    // 2. Verificar si la contraseña actual coincide
+    const passwordActualValida = (usuario.password || 'sena2026') === passwordActual ||
+      (usuario.numeroDocumento && usuario.numeroDocumento === passwordActual)
+
+    if (!passwordActualValida) {
+      return res.status(400).json({ error: 'La contraseña actual no coincide. Verifica e intenta de nuevo.' })
+    }
+
+    // 3. Asignar y guardar la nueva contraseña
+    usuario.password = nuevaPassword
+    await usuario.save()
+
+    return res.json({ ok: true, message: '¡Contraseña actualizada exitosamente!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
