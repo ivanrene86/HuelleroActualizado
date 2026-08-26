@@ -19,7 +19,11 @@ const DPFJ_POSITION_UNKNOWN = 0
 
 let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2
 
-const MATCH_THRESHOLD = 0x3FFFFFFF
+// Umbral de coincidencia biométrica (False Accept Rate - FAR)
+// En el SDK de DigitalPersona, la puntuación va de 0 (idéntica) a 0x7FFFFFFF (2,147,483,647).
+// FAR 1 / 100,000 (0.001% de falso positivo) = 21,474 (Estándar biométrico de alta precisión)
+// FAR 1 / 10,000  (0.01% de falso positivo)  = 214,748
+const MATCH_THRESHOLD = Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474
 
 let dpfj = null
 
@@ -351,3 +355,47 @@ export function verifyFingerprint(imageBase64, enrolledStudents) {
 
   return { match: false, bestScore: bestScore !== 0xFFFFFFFF ? bestScore : null }
 }
+
+export function checkDuplicateFingerprint(newTemplateBase64, enrolledStudents, currentStudentId) {
+  if (!newTemplateBase64 || !enrolledStudents || enrolledStudents.length === 0) {
+    return { isDuplicate: false }
+  }
+
+  let newTemplateBytes
+  try {
+    newTemplateBytes = bufFromBase64(newTemplateBase64)
+  } catch (e) {
+    return { isDuplicate: false }
+  }
+
+  for (const student of enrolledStudents) {
+    if (String(student._id) === String(currentStudentId)) continue
+    if (!student.huellaTemplate) continue
+
+    let existingBytes
+    try {
+      existingBytes = bufFromBase64(student.huellaTemplate)
+    } catch (e) {
+      continue
+    }
+
+    const { ok, score } = compareFmds(newTemplateBytes, existingBytes)
+    if (ok && score <= MATCH_THRESHOLD) {
+      console.log(`[fingerprint] ⚠️ DUPLICADO: Huella coincide con ${student.nombres} ${student.apellidos} (score=${score})`)
+      return {
+        isDuplicate: true,
+        student: {
+          id: student._id,
+          nombres: student.nombres,
+          apellidos: student.apellidos,
+          tipoDocumento: student.tipoDocumento,
+          numeroDocumento: student.numeroDocumento,
+        },
+        score
+      }
+    }
+  }
+
+  return { isDuplicate: false }
+}
+

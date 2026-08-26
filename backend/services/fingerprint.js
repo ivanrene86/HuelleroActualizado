@@ -17,6 +17,8 @@ const DPFJ_FMD_ISO_19794_2_2005 = 0x01010001
 
 const DPFJ_POSITION_UNKNOWN = 0
 
+let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2
+
 // Umbral de coincidencia biométrica (False Accept Rate - FAR)
 // En el SDK de DigitalPersona, la puntuación va de 0 (idéntica) a 0x7FFFFFFF (2,147,483,647).
 // FAR 1 / 100,000 (0.001% de falso positivo) = 21,474 (Estándar biométrico de alta precisión)

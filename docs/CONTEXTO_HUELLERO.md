@@ -238,6 +238,24 @@ Huellero → Backend:
 - `backend/services/fingerprint.js` fue copiado a `huellero/src/fingerprint.js`.
 - La copia es **byte-idéntica** (hash SHA256 coincide).
 - El original **NO fue modificado**.
+
+> **Re-sincronización (2026-08-26):** el backend original recibió una corrección crítica de seguridad: el umbral de aceptación de huellas (`MATCH_THRESHOLD`) se subió de `~50%` (`0x3FFFFFFF`) a un valor cercano al `100%` (`21474`, FAR 1/100.000, configurable vía `BIOMETRIC_MATCH_THRESHOLD`). `huellero/src/fingerprint.js` fue re-sincronizado desde `backend/services/fingerprint.js` y **ambos archivos vuelven a ser byte-idénticos**. Nota: durante el merge se perdió la declaración `let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2`; fue restaurada para evitar un `ReferenceError` y que ambos archivos coincidan.
+
+**Configuración biométrica — estado del umbral**
+
+`[IMPLEMENTADO]` Estado actual del umbral de coincidencia:
+
+- `MATCH_THRESHOLD` en `fingerprint.js` usa: `Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474`.
+- Hoy `BIOMETRIC_MATCH_THRESHOLD` **NO está definida** ni en `backend/.env` ni en ningún config del huellero. Ambos procesos (backend y huellero) caen al mismo fallback (`21474`), por lo que **no hay divergencia actual**.
+- Mecanismo de configuración asimétrico a tener en cuenta:
+  - **Backend:** se ajustaría agregando la variable en `backend/.env` (vía dotenv).
+  - **Huellero:** no tiene `.env` ni dotenv en el proceso main de Electron; para cambiarlo hoy habría que setear la variable a nivel del sistema operativo de cada PC individual — no hay mecanismo de configuración centralizado para esto en el huellero.
+- Riesgo si se cambia en el futuro: si alguien ajusta `BIOMETRIC_MATCH_THRESHOLD` en el backend (vía `.env`) pero no lo replica correctamente en cada PC con huellero, ambos lados quedarían verificando huellas con umbrales distintos sin ningún error visible (falla silenciosa).
+
+`[PENDIENTE]` Mejora futura sugerida:
+
+- Leer `BIOMETRIC_MATCH_THRESHOLD` desde `config.json` en el huellero (mismo mecanismo ya usado para `deviceId`/`token`/`backendUrl`/`wsUrl` en la Fase 3), en vez de depender de una variable de entorno del sistema operativo. Esto permitiría configurar el umbral de forma consistente y versionada junto con el resto de la configuración del dispositivo, sin tocar el registro del SO en cada PC.
+
 - `backend/dll/` fue copiado completo a `huellero/dll/` (las **8 DLLs**).
 - `huellero/package.json` usa:
   - `koffi` `^2.9.0`
