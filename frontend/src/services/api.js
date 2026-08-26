@@ -43,6 +43,9 @@ export default {
     resetPassword(correo, nuevaPassword) {
       return request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ correo, nuevaPassword }) })
     },
+    cambiarPassword(body) {
+      return request('/auth/cambiar-password', { method: 'POST', body: JSON.stringify(body) })
+    },
   },
 
   instructores: {
