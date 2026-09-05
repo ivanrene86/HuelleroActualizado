@@ -62,7 +62,7 @@ async function iniciarSesionPersonal() {
       emit('login-success', userData)
     }
   } catch (err) {
-    error.value = err.message || 'Correo o contraseña incorrectos'
+    error.value = err.message || 'Credenciales incorrectas. Verifique los datos e intente nuevamente.'
   } finally {
     loading.value = false
   }

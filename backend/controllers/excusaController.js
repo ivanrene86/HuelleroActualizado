@@ -2,15 +2,24 @@ import Excusa from '../models/Excusa.js'
 import Asistencia from '../models/Asistencia.js'
 import Estudiante from '../models/Estudiante.js'
 import Ficha from '../models/Ficha.js'
+import Instructor from '../models/Instructor.js'
 import { upsertAsistenciaSQLite } from '../services/sqliteExport.js'
+import { notificarExcusaAInstructor } from '../services/emailService.js'
 
 export async function getExcusas(req, res) {
   try {
-    const { estado, fichaId } = req.query
+    const { estado, fichaId, estudianteId } = req.query
     const filter = {}
     if (estado) filter.estado = estado
     if (fichaId) filter.fichaId = fichaId
-    const excusas = await Excusa.find(filter).sort({ createdAt: -1 })
+    if (estudianteId) filter.estudianteId = estudianteId
+
+    const excusas = await Excusa.find(filter)
+      .populate('estudianteId', 'nombres apellidos numeroDocumento tipoDocumento correo')
+      .populate('fichaId', 'codigoFicha nombrePrograma jornada aulaAsignada')
+      .populate('instructorId', 'nombres apellidos especialidad correo')
+      .sort({ createdAt: -1 })
+
     res.json(excusas)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -19,9 +28,49 @@ export async function getExcusas(req, res) {
 
 export async function createExcusa(req, res) {
   try {
-    const excusa = new Excusa(req.body)
+    const data = { ...req.body }
+
+    // Si no se proporcionó instructorId, buscarlo automáticamente en el registro de asistencia de esa fecha
+    if (!data.instructorId && data.estudianteId && data.fechaInasistencia) {
+      const regAsistencia = await Asistencia.findOne({
+        estudianteId: data.estudianteId,
+        fecha: data.fechaInasistencia
+      })
+      if (regAsistencia?.instructorId) {
+        data.instructorId = regAsistencia.instructorId
+      }
+    }
+
+    // Si no se especificaron horas a descontar, calcular por jornada de la ficha
+    if (!data.horasDescontar && data.fichaId) {
+      const fichaDoc = await Ficha.findById(data.fichaId)
+      const j = (fichaDoc?.jornada || '').toLowerCase()
+      data.horasDescontar = (j.includes('noche') || j.includes('nocturna')) ? 4 : 6
+    }
+
+    const excusa = new Excusa(data)
     await excusa.save()
-    res.status(201).json(excusa)
+
+    const excusaPopulada = await Excusa.findById(excusa._id)
+      .populate('estudianteId', 'nombres apellidos numeroDocumento tipoDocumento correo')
+      .populate('fichaId', 'codigoFicha nombrePrograma jornada aulaAsignada')
+      .populate('instructorId', 'nombres apellidos especialidad correo')
+
+    // Notificar al instructor por correo si está asignado
+    if (excusaPopulada?.instructorId?.correo) {
+      notificarExcusaAInstructor({
+        instructorCorreo: excusaPopulada.instructorId.correo,
+        instructorNombre: `${excusaPopulada.instructorId.nombres || ''} ${excusaPopulada.instructorId.apellidos || ''}`.trim(),
+        aprendizNombre: `${excusaPopulada.estudianteId?.nombres || ''} ${excusaPopulada.estudianteId?.apellidos || ''}`.trim(),
+        documentoAprendiz: excusaPopulada.estudianteId?.numeroDocumento || '—',
+        fichaCodigo: excusaPopulada.fichaId?.codigoFicha || '—',
+        fechaInasistencia: excusaPopulada.fechaInasistencia,
+        motivo: excusaPopulada.motivo,
+        horasDescontar: excusaPopulada.horasDescontar || 6,
+      }).catch(err => console.warn('[Excusa] Error al disparar email de notificación:', err.message))
+    }
+
+    res.status(201).json(excusaPopulada)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -30,6 +79,10 @@ export async function createExcusa(req, res) {
 export async function updateExcusa(req, res) {
   try {
     const excusa = await Excusa.findByIdAndUpdate(req.params.id, req.body, { new: true })
+      .populate('estudianteId', 'nombres apellidos numeroDocumento tipoDocumento correo')
+      .populate('fichaId', 'codigoFicha nombrePrograma jornada aulaAsignada')
+      .populate('instructorId', 'nombres apellidos especialidad correo')
+
     if (!excusa) return res.status(404).json({ error: 'Excusa no encontrada' })
     res.json(excusa)
   } catch (err) {
@@ -53,6 +106,7 @@ export async function aprobarExcusa(req, res) {
 
     if (asistencia) {
       asistencia.estado = 'Excusada'
+      asistencia.motivoInhabilitacion = excusa.motivo || 'Falta justificada con excusa'
       await asistencia.save()
     } else {
       asistencia = new Asistencia({
@@ -61,6 +115,8 @@ export async function aprobarExcusa(req, res) {
         fecha: excusa.fechaInasistencia,
         estado: 'Excusada',
         hora: '—',
+        instructorId: excusa.instructorId || null,
+        motivoInhabilitacion: excusa.motivo || 'Falta justificada con excusa'
       })
       await asistencia.save()
     }
@@ -107,6 +163,10 @@ export async function rechazarExcusa(req, res) {
       { estado: 'Rechazada', motivoRechazo: motivoRechazo || '' },
       { new: true }
     )
+      .populate('estudianteId', 'nombres apellidos numeroDocumento tipoDocumento correo')
+      .populate('fichaId', 'codigoFicha nombrePrograma jornada aulaAsignada')
+      .populate('instructorId', 'nombres apellidos especialidad correo')
+
     if (!excusa) return res.status(404).json({ error: 'Excusa no encontrada' })
     res.json({ ok: true, excusa })
   } catch (err) {

@@ -8,6 +8,7 @@ import ImportarUsuarios from './components/ImportarUsuarios.vue'
 import Dashboard from './components/Dashboard.vue'
 import Reportes from './components/Reportes.vue'
 import DiasFestivos from './components/DiasFestivos.vue'
+import Excusas from './components/Excusas.vue'
 import PanelInstructor from './components/PanelInstructor.vue'
 import PanelEstudiante from './components/PanelEstudiante.vue'
 import Login from './components/Login.vue'
@@ -31,6 +32,7 @@ const views = {
   panel_estudiante: { component: PanelEstudiante, label: 'Mi Panel Aprendiz', roles: ['Estudiante'] },
   dashboard: { component: Dashboard, label: 'Dashboard', roles: ['Administrador'] },
   perfil: { component: AdminPerfil, label: 'Perfil', roles: ['Administrador', 'Instructor'] },
+  excusas: { component: Excusas, label: 'Gestión de Excusas', roles: ['Administrador', 'Instructor'] },
   instructores: { component: Instructores, label: 'Instructores', roles: ['Administrador'] },
   estudiantes: { component: Estudiantes, label: 'Estudiantes', roles: ['Administrador', 'Instructor'] },
   fichas: { component: Fichas, label: 'Fichas', roles: ['Administrador'] },

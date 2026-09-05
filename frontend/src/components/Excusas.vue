@@ -14,16 +14,23 @@ const loading = ref(false)
 const HORAS_POR_DIA = 6
 
 const excusaForm = reactive({
-  estudianteId: null, fechaInasistencia: '', tipoExcusa: 'Medica',
-  adjuntoNombre: '', adjuntoData: null, horasDescontar: HORAS_POR_DIA,
+  estudianteId: null,
+  fechaInasistencia: '',
+  instructorId: null,
+  tipoExcusa: 'Medica',
+  motivo: '',
+  adjuntoNombre: '',
+  adjuntoData: null,
+  horasDescontar: HORAS_POR_DIA,
 })
 
 const fichasList = ref([])
 const todosEstudiantes = ref([])
+const todosInstructores = ref([])
 const excusas = ref([])
 
 onMounted(async () => {
-  await Promise.all([loadExcusas(), loadEstudiantes(), loadFichas()])
+  await Promise.all([loadExcusas(), loadEstudiantes(), loadFichas(), loadInstructores()])
 })
 
 async function loadExcusas() {
@@ -38,15 +45,48 @@ async function loadFichas() {
   try { fichasList.value = await api.fichas.getAll() } catch (e) {}
 }
 
+async function loadInstructores() {
+  try { todosInstructores.value = await api.instructores.getAll() } catch (e) {}
+}
+
 const excusasFiltradas = computed(() => {
   let lista = excusas.value
   if (filtroEstado.value !== 'Todos') lista = lista.filter(e => e.estado === filtroEstado.value)
-  if (filtroFichaExcusa.value) lista = lista.filter(e => e.fichaId === filtroFichaExcusa.value)
+  if (filtroFichaExcusa.value) {
+    lista = lista.filter(e => {
+      const fId = e.fichaId?._id || e.fichaId
+      return String(fId) === String(filtroFichaExcusa.value)
+    })
+  }
   return lista.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 })
 
-function getEstudianteById(id) { return todosEstudiantes.value.find(e => e._id === id) }
-function getFichaById(id) { return fichasList.value.find(f => f._id === id) }
+function getEstudiante(e) {
+  if (e.estudianteId && typeof e.estudianteId === 'object') return e.estudianteId
+  return todosEstudiantes.value.find(est => est._id === e.estudianteId) || {}
+}
+
+function getFicha(e) {
+  if (e.fichaId && typeof e.fichaId === 'object') return e.fichaId
+  return fichasList.value.find(f => f._id === e.fichaId) || {}
+}
+
+function getInstructor(e) {
+  if (e.instructorId && typeof e.instructorId === 'object') {
+    return {
+      nombre: `${e.instructorId.nombres || ''} ${e.instructorId.apellidos || ''}`.trim() || 'Docente de Clase',
+      especialidad: e.instructorId.especialidad || 'Formación Técnica'
+    }
+  }
+  const inst = todosInstructores.value.find(i => String(i._id) === String(e.instructorId))
+  if (inst) {
+    return {
+      nombre: `${inst.nombres} ${inst.apellidos}`,
+      especialidad: inst.especialidad || 'Formación Técnica'
+    }
+  }
+  return { nombre: 'Docente de Clase', especialidad: 'Formación Técnica' }
+}
 
 function showToastFn(message, type = 'success') {
   toast.value = { show: true, message, type }
@@ -55,8 +95,14 @@ function showToastFn(message, type = 'success') {
 
 function openCreate() {
   Object.assign(excusaForm, {
-    estudianteId: null, fechaInasistencia: '', tipoExcusa: 'Medica',
-    adjuntoNombre: '', adjuntoData: null, horasDescontar: HORAS_POR_DIA,
+    estudianteId: null,
+    fechaInasistencia: new Date().toISOString().slice(0, 10),
+    instructorId: null,
+    tipoExcusa: 'Medica',
+    motivo: '',
+    adjuntoNombre: '',
+    adjuntoData: null,
+    horasDescontar: HORAS_POR_DIA,
   })
   showModal.value = true
 }
@@ -78,18 +124,20 @@ function handleFileUpload(event) {
 }
 
 async function guardarExcusa() {
-  if (!excusaForm.estudianteId || !excusaForm.fechaInasistencia || !excusaForm.tipoExcusa) {
-    showToastFn('Completa todos los campos obligatorios', 'error')
+  if (!excusaForm.estudianteId || !excusaForm.fechaInasistencia || !excusaForm.motivo.trim()) {
+    showToastFn('Completa el estudiante, fecha y motivo de la excusa', 'error')
     return
   }
   loading.value = true
   try {
-    const est = getEstudianteById(excusaForm.estudianteId)
+    const est = todosEstudiantes.value.find(e => e._id === excusaForm.estudianteId)
     await api.excusas.create({
       estudianteId: excusaForm.estudianteId,
       fichaId: est ? est.fichaId : null,
+      instructorId: excusaForm.instructorId,
       fechaInasistencia: excusaForm.fechaInasistencia,
       tipoExcusa: excusaForm.tipoExcusa,
+      motivo: excusaForm.motivo,
       adjuntoNombre: excusaForm.adjuntoNombre,
       adjuntoData: excusaForm.adjuntoData,
       horasDescontar: excusaForm.horasDescontar,
@@ -108,7 +156,7 @@ async function aprobarExcusa(excusa) {
   try {
     await api.excusas.aprobar(excusa._id)
     await loadExcusas()
-    showToastFn(`Excusa aprobada. ${excusa.horasDescontar} horas descontadas del contador de fallas.`)
+    showToastFn(`Excusa aprobada. ${excusa.horasDescontar || 6} horas descontadas del contador de fallas.`)
   } catch (e) {
     showToastFn('Error: ' + e.message, 'error')
   }
@@ -120,15 +168,18 @@ function abrirRechazar(excusa) {
   showRechazarModal.value = true
 }
 
-async function confirmarRechazo() {
-  if (!rechazarMotivo.value.trim()) {
-    showToastFn('Ingresa un motivo de rechazo', 'error')
-    return
-  }
+function closeRechazar() {
+  showRechazarModal.value = false
+  rechazarTarget.value = null
+  rechazarMotivo.value = ''
+}
+
+async function confirmarRechazar() {
+  if (!rechazarTarget.value) return
   try {
-    await api.excusas.rechazar(rechazarTarget.value._id, rechazarMotivo.value.trim())
+    await api.excusas.rechazar(rechazarTarget.value._id, rechazarMotivo.value)
     await loadExcusas()
-    showRechazarModal.value = false
+    closeRechazar()
     showToastFn('Excusa rechazada')
   } catch (e) {
     showToastFn('Error: ' + e.message, 'error')
@@ -136,64 +187,90 @@ async function confirmarRechazo() {
 }
 
 function tipoBadge(tipo) {
-  if (tipo === 'Medica') return 'badge-primary'
-  if (tipo === 'Personal') return 'badge-warning'
-  return 'badge-ficha'
+  const map = { Medica: 'badge-info', Personal: 'badge-warning', Institucional: 'badge-success' }
+  return map[tipo] || 'badge-default'
 }
 
 function estadoBadge(estado) {
-  if (estado === 'Aprobada') return 'badge-success'
-  if (estado === 'Rechazada') return 'badge-danger'
-  return 'badge-neutral'
+  const map = { Pendiente: 'badge-warning', Aprobada: 'badge-success', Rechazada: 'badge-danger' }
+  return map[estado] || 'badge-default'
 }
 </script>
 
 <template>
   <div class="page-header">
-    <h1>Excusas</h1>
-    <p>Gestiona y aprueba excusas medicas, personales e institucionales con recalculo automatico de horas</p>
+    <h1>Gestión de Excusas e Inasistencias</h1>
+    <p>Revisión y aprobación de justificaciones médicas e institucionales con atribución por docente y horas</p>
   </div>
+
+  <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
 
   <div class="card">
     <div class="card-header">
-      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-        <h3>Listado de Excusas</h3>
+      <div class="card-header-left">
+        <h3>Listado de Excusas Radicadas</h3>
         <select v-model="filtroEstado" class="filtro-select">
-          <option value="Todos">Todas</option><option value="Pendiente">Pendientes</option><option value="Aprobada">Aprobadas</option><option value="Rechazada">Rechazadas</option>
+          <option value="Todos">Todas los estados</option>
+          <option value="Pendiente">Pendientes</option>
+          <option value="Aprobada">Aprobadas</option>
+          <option value="Rechazada">Rechazadas</option>
         </select>
         <select v-model="filtroFichaExcusa" class="filtro-select">
           <option :value="null">Todas las fichas</option>
-          <option v-for="f in fichasList" :key="f._id" :value="f._id">{{ f.codigoFicha }}</option>
+          <option v-for="f in fichasList" :key="f._id" :value="f._id">{{ f.codigoFicha }} - {{ f.nombrePrograma }}</option>
         </select>
       </div>
-      <button class="btn btn-primary" @click="openCreate">+ Registrar Excusa</button>
+      <button class="btn btn-primary" @click="openCreate">+ Radicar Excusa Manual</button>
     </div>
 
     <div v-if="excusasFiltradas.length === 0" class="empty-state">
-      <p>No hay excusas registradas. Usa el boton "Registrar Excusa" para agregar una.</p>
+      <p>No hay excusas registradas para el filtro seleccionado.</p>
     </div>
 
     <div v-else class="table-container">
       <table>
         <thead>
           <tr>
-            <th>Estudiante</th><th>Ficha</th><th>Fecha Inasistencia</th><th>Tipo</th><th>Adjunto</th><th>Horas</th><th>Estado</th><th>Acciones</th>
+            <th>Aprendiz</th>
+            <th>Ficha</th>
+            <th>Fecha Inasistencia</th>
+            <th>Profesor de la Clase</th>
+            <th>Tipo / Justificación</th>
+            <th>Horas</th>
+            <th>Estado</th>
+            <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="e in excusasFiltradas" :key="e._id" :class="{ 'fila-inactivo': e.estado === 'Rechazada' }">
             <td>
-              <strong>{{ getEstudianteById(e.estudianteId)?.nombres }} {{ getEstudianteById(e.estudianteId)?.apellidos }}</strong>
-              <div style="font-size: 11px; color: var(--text-secondary);">{{ getEstudianteById(e.estudianteId)?.numeroDocumento }}</div>
+              <strong>{{ getEstudiante(e).nombres }} {{ getEstudiante(e).apellidos }}</strong>
+              <div style="font-size: 11px; color: var(--text-secondary);">{{ getEstudiante(e).tipoDocumento }} {{ getEstudiante(e).numeroDocumento }}</div>
             </td>
-            <td><span class="badge badge-ficha">{{ getFichaById(e.fichaId)?.codigoFicha || '—' }}</span></td>
-            <td>{{ e.fechaInasistencia }}</td>
-            <td><span class="badge" :class="tipoBadge(e.tipoExcusa)">{{ e.tipoExcusa }}</span></td>
-            <td><span v-if="e.adjuntoNombre" style="font-size: 12px; color: var(--text-secondary);">{{ e.adjuntoNombre.length > 20 ? e.adjuntoNombre.slice(0, 20) + '...' : e.adjuntoNombre }}</span><span v-else>—</span></td>
-            <td><strong>{{ e.horasDescontar }}h</strong></td>
+            <td>
+              <span class="badge badge-ficha">{{ getFicha(e).codigoFicha || '—' }}</span>
+              <div style="font-size: 11px; color: var(--text-secondary);">{{ getFicha(e).jornada }}</div>
+            </td>
+            <td><strong>{{ e.fechaInasistencia }}</strong></td>
+            <td>
+              <strong>👨‍🏫 {{ getInstructor(e).nombre }}</strong>
+              <div style="font-size: 11px; color: var(--text-secondary);">{{ getInstructor(e).especialidad }}</div>
+            </td>
+            <td>
+              <span class="badge" :class="tipoBadge(e.tipoExcusa)">{{ e.tipoExcusa }}</span>
+              <div style="font-size: 12px; color: #334155; margin-top: 4px; max-width: 250px;">
+                {{ e.motivo }}
+              </div>
+              <div v-if="e.adjuntoNombre" style="font-size: 11px; color: #0284c7; margin-top: 2px;">
+                📎 {{ e.adjuntoNombre }}
+              </div>
+            </td>
+            <td><strong>{{ e.horasDescontar || 6 }}h</strong></td>
             <td>
               <span class="badge" :class="estadoBadge(e.estado)">{{ e.estado }}</span>
-              <div v-if="e.estado === 'Rechazada' && e.motivoRechazo" class="motivo-texto">{{ e.motivoRechazo }}</div>
+              <div v-if="e.estado === 'Rechazada' && e.motivoRechazo" class="motivo-texto" style="color: #dc2626; font-size: 11px; margin-top: 4px;">
+                Motivo: {{ e.motivoRechazo }}
+              </div>
             </td>
             <td>
               <div class="btn-group">
@@ -201,7 +278,9 @@ function estadoBadge(estado) {
                   <button class="btn btn-success btn-sm" @click="aprobarExcusa(e)">Aprobar</button>
                   <button class="btn btn-danger btn-sm" @click="abrirRechazar(e)">Rechazar</button>
                 </template>
-                <span v-else style="font-size: 12px; color: var(--text-secondary);">{{ e.fechaRegistro }}</span>
+                <span v-else style="font-size: 12px; color: var(--text-secondary);">
+                  {{ e.updatedAt ? new Date(e.updatedAt).toLocaleDateString('es-CO') : 'Procesada' }}
+                </span>
               </div>
             </td>
           </tr>
@@ -210,49 +289,94 @@ function estadoBadge(estado) {
     </div>
   </div>
 
+  <!-- MODAL REGISTRAR EXCUSA MANUAL -->
   <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
-    <div class="modal">
-      <h2>Registrar Excusa</h2>
+    <div class="modal" style="max-width: 550px;">
+      <h2>Radicar Justificación de Excusa</h2>
       <div class="form-grid">
-        <div class="form-group">
-          <label>Estudiante</label>
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>Aprendiz <span style="color: #ef4444;">*</span></label>
           <select v-model="excusaForm.estudianteId">
-            <option :value="null" disabled>Selecciona un estudiante</option>
-            <option v-for="e in todosEstudiantes" :key="e._id" :value="e._id">{{ e.nombres }} {{ e.apellidos }} - {{ e.numeroDocumento }}</option>
+            <option :value="null" disabled>Selecciona un aprendiz</option>
+            <option v-for="e in todosEstudiantes" :key="e._id" :value="e._id">
+              {{ e.nombres }} {{ e.apellidos }} — {{ e.tipoDocumento }} {{ e.numeroDocumento }}
+            </option>
           </select>
         </div>
-        <div class="form-group"><label>Fecha de Inasistencia</label><input v-model="excusaForm.fechaInasistencia" type="date" /></div>
-        <div class="form-group"><label>Tipo de Excusa</label><select v-model="excusaForm.tipoExcusa"><option value="Medica">Medica</option><option value="Personal">Personal</option><option value="Institucional">Institucional</option></select></div>
-        <div class="form-group"><label>Horas a Descontar</label><input v-model.number="excusaForm.horasDescontar" type="number" min="1" max="24" /></div>
+
         <div class="form-group">
-          <label>Adjunto PDF</label>
+          <label>Fecha de Inasistencia <span style="color: #ef4444;">*</span></label>
+          <input v-model="excusaForm.fechaInasistencia" type="date" />
+        </div>
+
+        <div class="form-group">
+          <label>Profesor de la Clase</label>
+          <select v-model="excusaForm.instructorId">
+            <option :value="null">Detección automática por horario</option>
+            <option v-for="inst in todosInstructores" :key="inst._id" :value="inst._id">
+              {{ inst.nombres }} {{ inst.apellidos }} ({{ inst.especialidad || 'Docente' }})
+            </option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Tipo de Excusa</label>
+          <select v-model="excusaForm.tipoExcusa">
+            <option value="Medica">Médica (EPS / Hospital)</option>
+            <option value="Personal">Personal / Calamidad Doméstica</option>
+            <option value="Institucional">Institucional SENA / Pasantía</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Horas a Descontar</label>
+          <input v-model.number="excusaForm.horasDescontar" type="number" min="1" max="24" />
+        </div>
+
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>Motivo o Justificación Detallada <span style="color: #ef4444;">*</span></label>
+          <textarea
+            v-model="excusaForm.motivo"
+            rows="3"
+            placeholder="Escribe el motivo detallado de la inasistencia..."
+            style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px;"
+          ></textarea>
+        </div>
+
+        <div class="form-group" style="grid-column: 1 / -1;">
+          <label>Documento de Soporte (Opcional)</label>
           <div class="file-upload-wrapper">
             <input type="file" accept=".pdf,.jpg,.jpeg,.png" @change="handleFileUpload" class="file-input" />
-            <label class="file-label">{{ excusaForm.adjuntoNombre || 'Seleccionar archivo (PDF, JPG, PNG)' }}</label>
+            <span v-if="excusaForm.adjuntoNombre" class="file-name">{{ excusaForm.adjuntoNombre }}</span>
           </div>
         </div>
       </div>
-      <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
+      <div class="modal-actions">
         <button class="btn btn-outline" @click="closeModal">Cancelar</button>
-        <button class="btn btn-primary" @click="guardarExcusa" :disabled="loading">{{ loading ? 'Guardando...' : 'Registrar Excusa' }}</button>
+        <button class="btn btn-primary" :disabled="loading" @click="guardarExcusa">Guardar Excusa</button>
       </div>
     </div>
   </div>
 
-  <div v-if="showRechazarModal" class="modal-overlay" @click.self="showRechazarModal = false">
-    <div class="modal">
+  <!-- MODAL RECHAZAR EXCUSA -->
+  <div v-if="showRechazarModal" class="modal-overlay" @click.self="closeRechazar">
+    <div class="modal" style="max-width: 440px;">
       <h2>Rechazar Excusa</h2>
-      <p style="color: var(--text-secondary); margin-bottom: 16px;">Indica el motivo por el cual se rechaza esta excusa.</p>
+      <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 12px;">
+        Indica el motivo por el cual no se acepta la justificación (ej. soporte ilegible o fuera del plazo reglamentario):
+      </p>
       <div class="form-group">
-        <label>Motivo de Rechazo</label>
-        <textarea v-model="rechazarMotivo" rows="3" placeholder="Ej: Documento no valido, falta informacion, fuera de plazo..." style="width: 100%; padding: 10px 12px; border: 1px solid var(--input-border); border-radius: 6px; font-size: 14px; font-family: var(--sans); resize: vertical;"></textarea>
+        <textarea
+          v-model="rechazarMotivo"
+          placeholder="Motivo del rechazo..."
+          rows="3"
+          style="width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 13px;"
+        ></textarea>
       </div>
-      <div class="btn-group" style="margin-top: 24px; justify-content: flex-end;">
-        <button class="btn btn-outline" @click="showRechazarModal = false">Cancelar</button>
-        <button class="btn btn-danger" @click="confirmarRechazo">Confirmar Rechazo</button>
+      <div class="modal-actions">
+        <button class="btn btn-outline" @click="closeRechazar">Cancelar</button>
+        <button class="btn btn-danger" @click="confirmarRechazar">Confirmar Rechazo</button>
       </div>
     </div>
   </div>
-
-  <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
 </template>

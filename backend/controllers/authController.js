@@ -31,7 +31,7 @@ export async function login(req, res) {
           admin: payload
         })
       }
-      return res.status(401).json({ error: 'Contraseña incorrecta' })
+      return res.status(401).json({ error: 'Credenciales incorrectas. Verifique los datos e intente nuevamente.' })
     }
 
     // 2. Buscar en Instructores (por correo o número de documento)
@@ -66,7 +66,7 @@ export async function login(req, res) {
           admin: payload
         })
       }
-      return res.status(401).json({ error: 'Contraseña incorrecta' })
+      return res.status(401).json({ error: 'Credenciales incorrectas. Verifique los datos e intente nuevamente.' })
     }
 
     // 3. Buscar en Estudiantes / Aprendices (Consulta directa por documento o correo, sin requerir contraseña)
@@ -96,7 +96,7 @@ export async function login(req, res) {
       })
     }
 
-    return res.status(401).json({ error: 'Usuario no encontrado o credenciales incorrectas' })
+    return res.status(401).json({ error: 'Credenciales incorrectas. Verifique los datos e intente nuevamente.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
