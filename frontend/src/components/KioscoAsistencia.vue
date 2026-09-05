@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { socket, unirseASalaFicha, salirDeSalaFicha, notificarMarcacionKiosco } from '../services/socket.js'
 import api from '../services/api.js'
 
@@ -46,16 +46,17 @@ const fichaActual = computed(() => {
 // Datos de la ficha
 const estudiantesFicha = ref([])
 const asistenciasDia = ref({})
-const marcacionesRecientes = ref([]) // Solo los que han marcado en esta sesión
+const marcacionesRecientes = ref([])
 
 // Reloj en vivo
 const horaActual = ref('')
+const fechaFormateada = ref('')
 let timerReloj = null
 
 // SDK Biométrico
 const lectorConectado = ref(false)
 const capturando = ref(false)
-const estadoLectorMsg = ref('Inicializando lector USB...')
+const estadoLectorMsg = ref('Inicializando sensor USB...')
 const procesandoHuella = ref(false)
 let fpSdk = null
 let currentReaderUid = ''
@@ -96,6 +97,12 @@ function actualizarHora() {
     minute: '2-digit',
     second: '2-digit',
     hour12: true,
+  })
+  fechaFormateada.value = ahora.toLocaleDateString('es-CO', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
   })
 }
 
@@ -147,10 +154,8 @@ function iniciarSocketKiosco() {
   if (props.ficha?._id) {
     unirseASalaFicha(props.ficha._id, 'kiosco')
   }
-  // Unirse siempre a la sala global de kioscos de aula
   unirseASalaFicha('global_kioscos', 'kiosco')
 
-  // Estado inicial
   socket.on('estado_sesion', ({ activa, sesion }) => {
     sesionActiva.value = activa
     sesionData.value = sesion
@@ -160,6 +165,7 @@ function iniciarSocketKiosco() {
         codigoFicha: sesion.fichaCodigo,
         nombrePrograma: sesion.nombrePrograma,
         jornada: sesion.jornada,
+        aulaAsignada: sesion.aulaAsignada || 'Ambiente Asignado',
       }
       cargarEstudiantesYAsistencias(sesion.fichaId)
       iniciarCapturaBiometrica()
@@ -168,9 +174,7 @@ function iniciarSocketKiosco() {
     }
   })
 
-  // Orden remota: Activar
   const onActivar = async (sesion) => {
-    console.log('[Kiosco] 📡 Recibida orden remota: ACTIVAR ASISTENCIA para ficha', sesion.fichaCodigo)
     sesionActiva.value = true
     sesionData.value = sesion
     fichaDinamica.value = {
@@ -178,6 +182,7 @@ function iniciarSocketKiosco() {
       codigoFicha: sesion.fichaCodigo,
       nombrePrograma: sesion.nombrePrograma,
       jornada: sesion.jornada,
+      aulaAsignada: sesion.aulaAsignada || 'Ambiente Asignado',
     }
     await cargarEstudiantesYAsistencias(sesion.fichaId)
     iniciarCapturaBiometrica()
@@ -186,9 +191,7 @@ function iniciarSocketKiosco() {
   socket.on('kiosco:activar_lectura', onActivar)
   socket.on('kiosco:activar_lectura_global', onActivar)
 
-  // Orden remota: Desactivar
   const onDesactivar = () => {
-    console.log('[Kiosco] 📡 Recibida orden remota: DESACTIVAR ASISTENCIA')
     sesionActiva.value = false
     detenerCapturaBiometrica()
     if (props.standalone) {
@@ -204,7 +207,7 @@ function iniciarSocketKiosco() {
 // 3. Inicializar SDK de Huella DigitalPersona
 function iniciarSDKBiometrico() {
   if (typeof Fingerprint === 'undefined') {
-    estadoLectorMsg.value = 'Esperando servicio de huellas...'
+    estadoLectorMsg.value = 'Iniciando servicios...'
     setTimeout(iniciarSDKBiometrico, 1000)
     return
   }
@@ -233,7 +236,7 @@ function iniciarSDKBiometrico() {
         const sampleBase64 = Fingerprint.b64UrlTo64(samples[0])
         await procesarHuellaKiosco(sampleBase64)
       } catch (err) {
-        console.error('[Kiosco] Error al parsear muestra:', err)
+        console.error('[Kiosco] Error al procesar huella:', err)
       }
     }
 
@@ -242,31 +245,28 @@ function iniciarSDKBiometrico() {
         if (readers && readers.length > 0) {
           currentReaderUid = readers[0]
           lectorConectado.value = true
-          estadoLectorMsg.value = 'Lector USB listo'
+          estadoLectorMsg.value = 'Sensor DigitalPersona Listo'
           if (sesionActiva.value) iniciarCapturaBiometrica()
         } else {
           lectorConectado.value = false
-          estadoLectorMsg.value = 'Conecte el lector de huellas USB'
+          estadoLectorMsg.value = 'Conecte el sensor USB'
         }
       },
       () => {
         lectorConectado.value = false
-        estadoLectorMsg.value = 'Servicio local DigitalPersona no detectado'
+        estadoLectorMsg.value = 'Servicio local no detectado'
       }
     )
   } catch (err) {
-    console.error('[Kiosco] Error al crear WebApi:', err)
-    estadoLectorMsg.value = 'Error inicializando sensor'
+    console.error('[Kiosco] Error al inicializar SDK:', err)
+    estadoLectorMsg.value = 'Error de sensor'
   }
 }
 
 function iniciarCapturaBiometrica() {
   if (!fpSdk || !lectorConectado.value || capturando.value) return
   fpSdk.startAcquisition(currentFormat, currentReaderUid).then(
-    () => {
-      capturando.value = true
-      console.log('[Kiosco] 🟢 Captura biométrica iniciada')
-    },
+    () => { capturando.value = true },
     (err) => console.error('[Kiosco] Error al iniciar captura:', err)
   )
 }
@@ -274,10 +274,7 @@ function iniciarCapturaBiometrica() {
 function detenerCapturaBiometrica() {
   if (!fpSdk || !capturando.value) return
   fpSdk.stopAcquisition().then(
-    () => {
-      capturando.value = false
-      console.log('[Kiosco] 🔴 Captura biométrica detenida')
-    },
+    () => { capturando.value = false },
     (err) => console.warn('[Kiosco] Error al detener captura:', err)
   )
 }
@@ -306,19 +303,18 @@ async function procesarHuellaKiosco(imageBase64) {
       const nombreCompleto = `${result.nombres} ${result.apellidos}`
       const registroPrevio = asistenciasDia.value[estId]
 
-      // Determinar si es presente o tardanza
       const jornada = fichaActual.value?.jornada || 'Mañana'
       const esTardanza = calcularTardanza(jornada, ahora)
       const estadoMarcado = esTardanza ? 'Tardanza' : 'Presente'
 
       if (registroPrevio && (registroPrevio.estado === 'Presente' || registroPrevio.estado === 'Tardanza')) {
-        // Ya había registrado asistencia previamente
         mostrarResultadoMarcacion({
           tipo: 'ya_registrado',
           nombreCompleto,
+          hora: registroPrevio.hora || horaStr,
+          estado: registroPrevio.estado,
         })
       } else {
-        // Registrar nueva asistencia en BD
         await api.asistencias.create({
           estudianteId: estId,
           fichaId: fichaId,
@@ -342,17 +338,17 @@ async function procesarHuellaKiosco(imageBase64) {
           estado: estadoMarcado,
         }
 
-        // Notificar en tiempo real al panel del docente vía WebSockets
         notificarMarcacionKiosco(datosNotificacion)
         emit('asistencia-marcada', datosNotificacion)
 
         mostrarResultadoMarcacion({
           tipo: 'exito',
           nombreCompleto,
+          hora: horaStr,
+          estado: estadoMarcado,
         })
       }
     } else {
-      // Huella no reconocida
       mostrarResultadoMarcacion({
         tipo: 'no_reconocida',
         nombreCompleto: '',
@@ -371,9 +367,6 @@ function calcularTardanza(jornada, ahora) {
   const totalMinutos = horas * 60 + minutos
 
   // Jornadas estándar SENA (Tolerancia 15 minutos):
-  // Mañana: 06:00 -> Límite 06:15 (375 min)
-  // Tarde: 12:00 -> Límite 12:15 (735 min)
-  // Noche: 18:00 -> Límite 18:15 (1095 min)
   if (jornada === 'Mañana' && totalMinutos > 6 * 60 + 15) return true
   if (jornada === 'Tarde' && totalMinutos > 12 * 60 + 15) return true
   if (jornada === 'Noche' && totalMinutos > 18 * 60 + 15) return true
@@ -384,7 +377,6 @@ function mostrarResultadoMarcacion(resultado) {
   if (timerLimpiarMarcacion) clearTimeout(timerLimpiarMarcacion)
   ultimaMarcacion.value = resultado
 
-  // Limpiar el mensaje de bienvenida después de 3.5 segundos para que quede listo para el siguiente alumno
   timerLimpiarMarcacion = setTimeout(() => {
     ultimaMarcacion.value = null
   }, 3500)
@@ -399,610 +391,811 @@ function togglePantallaCompleta() {
     esPantallaCompleta.value = false
   }
 }
-
-const totalPresentes = computed(() => {
-  return Object.values(asistenciasDia.value).filter(
-    (a) => a.estado === 'Presente' || a.estado === 'Tardanza'
-  ).length
-})
-
-const porcentajeAsistencia = computed(() => {
-  const total = estudiantesFicha.value.length
-  if (total === 0) return 0
-  return Math.round((totalPresentes.value / total) * 100)
-})
 </script>
 
 <template>
-  <div class="kiosco-container" :class="{ 'modo-pantalla-completa': esPantallaCompleta }">
-    <!-- BARRA SUPERIOR INSTITUCIONAL -->
-    <header class="kiosco-header">
-      <div class="kiosco-brand">
-        <div class="sena-logo-badge">SENA</div>
-        <div class="kiosco-brand-info">
-          <span class="kiosco-badge-tag">SISTEMA BIOMÉTRICO INSTITUCIONAL</span>
-          <h2 v-if="fichaActual">{{ fichaActual.nombrePrograma }}</h2>
-          <h2 v-else>KIOSCO DE AULA — MODO ESPERA</h2>
-          <div v-if="fichaActual" class="kiosco-meta-tags">
-            <span class="meta-tag">Ficha: <strong>{{ fichaActual.codigoFicha }}</strong></span>
-            <span class="meta-tag">Jornada: <strong>{{ fichaActual.jornada }}</strong></span>
-            <span class="meta-tag">Aula: <strong>{{ fichaActual.aulaAsignada || 'Ambiente Asignado' }}</strong></span>
+  <div class="kiosco-minimal" :class="{ 'pantalla-completa': esPantallaCompleta }">
+    <!-- ENCABEZADO MINIMALISTA -->
+    <header class="minimal-header">
+      <div class="header-left">
+        <div class="sena-tag">
+          <span class="sena-dot"></span>
+          <span class="sena-name">SENA</span>
+        </div>
+
+        <div class="class-info">
+          <h1 class="class-title">
+            {{ fichaActual ? fichaActual.nombrePrograma : 'Terminal de Asistencia' }}
+          </h1>
+          <div v-if="fichaActual" class="class-badges">
+            <span class="badge-item">Ficha {{ fichaActual.codigoFicha }}</span>
+            <span class="badge-separator">•</span>
+            <span class="badge-item">{{ fichaActual.jornada }}</span>
+            <span class="badge-separator">•</span>
+            <span class="badge-item">{{ fichaActual.aulaAsignada || 'Ambiente Asignado' }}</span>
           </div>
-          <div v-else class="kiosco-meta-tags">
-            <span class="meta-tag">Estado: <strong>Esperando inicio de clase</strong></span>
-            <span class="meta-tag">Modo: <strong>Receptor Autónomo</strong></span>
+          <div v-else class="class-badges">
+            <span class="badge-item">Receptor de Aula</span>
+            <span class="badge-separator">•</span>
+            <span class="badge-item">Modo Espera</span>
           </div>
         </div>
       </div>
 
-      <!-- RELOJ EN VIVO Y CONTROLES -->
-      <div class="kiosco-header-right">
-        <div class="live-clock-card">
-          <div class="live-clock-time">{{ horaActual }}</div>
-          <div class="live-clock-date">{{ fecha }}</div>
+      <div class="header-right">
+        <div class="clock-box">
+          <div class="clock-display">{{ horaActual }}</div>
+          <div class="date-display">{{ fechaFormateada }}</div>
         </div>
 
-        <div class="kiosco-actions">
-          <button class="btn-kiosco-tool" @click="togglePantallaCompleta" title="Pantalla Completa">
-            {{ esPantallaCompleta ? '🗗 Salir' : '⛶ Pantalla Completa' }}
+        <div class="header-buttons">
+          <button class="btn-clean" @click="togglePantallaCompleta" :title="esPantallaCompleta ? 'Restaurar' : 'Pantalla Completa'">
+            <svg v-if="!esPantallaCompleta" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+            </svg>
+            <span>{{ esPantallaCompleta ? 'Salir' : 'Ampliar' }}</span>
           </button>
-          <button class="btn-kiosco-exit" @click="$emit('salir-kiosco')">
-            ✕ {{ standalone ? 'Volver al Inicio' : 'Volver al Panel' }}
+
+          <button class="btn-clean btn-exit" @click="$emit('salir-kiosco')">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+            <span>{{ standalone ? 'Cerrar' : 'Volver' }}</span>
           </button>
         </div>
       </div>
     </header>
 
-    <!-- ESTADO DE LA SESIÓN REMOTA (BANNER) -->
-    <div class="kiosco-session-banner" :class="sesionActiva ? 'banner-active' : 'banner-waiting'">
-      <div class="banner-status-indicator">
-        <span class="status-dot" :class="sesionActiva ? 'dot-pulsing' : 'dot-idle'"></span>
-        <span v-if="sesionActiva">
-          🟢 <strong>CLASE EN CURSO (PASE DE LISTA ACTIVO)</strong> — Lector Biométrico Listo
-        </span>
-        <span v-else>
-          🟡 <strong>SESIÓN EN ESPERA</strong> — El docente activará la toma de asistencia desde su dispositivo
+    <!-- BARRA DE ESTADO SUTIL -->
+    <div class="status-strip">
+      <div class="status-indicator">
+        <span class="indicator-dot" :class="sesionActiva ? 'dot-active' : 'dot-standby'"></span>
+        <span class="indicator-label">
+          {{ sesionActiva ? 'Pase de lista en curso' : 'Esperando activación del docente' }}
         </span>
       </div>
 
-      <div class="banner-reader-status">
-        <span class="reader-icon">🔌</span>
+      <div class="hardware-label">
+        <span class="hw-status-dot" :class="lectorConectado ? 'hw-on' : 'hw-off'"></span>
         <span>{{ estadoLectorMsg }}</span>
       </div>
     </div>
 
-    <!-- CUERPO PRINCIPAL -->
-    <main class="kiosco-main-body">
-      <!-- MODO 1: EN ESPERA AUTÓNOMA (Sin ficha activa) -->
-      <section v-if="!fichaActual" class="kiosco-center-area">
-        <div class="kiosco-standby-card">
-          <div class="standby-pulse-beacon">
-            <span class="standby-icon">📡</span>
+    <!-- CUERPO PRINCIPAL MINIMALISTA -->
+    <main class="minimal-stage">
+      <!-- MODO 1: ESPERA (Sin ficha asignada) -->
+      <div v-if="!fichaActual" class="standby-wrapper">
+        <div class="standby-card">
+          <div class="standby-icon-box">
+            <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+            </svg>
           </div>
-          <h1 class="standby-title">Computador del Aula Conectado</h1>
-          <p class="standby-subtitle">
-            El instructor activará la clase de forma remota desde su dispositivo móvil o panel web.
-            Esta pantalla cargará automáticamente los estudiantes y activará el lector de huellas.
+          <h2 class="standby-headline">Terminal Conectado</h2>
+          <p class="standby-subline">
+            El docente activará la sesión de clase desde su panel.
+            La pantalla se configurará automáticamente para el pase de lista.
           </p>
-
-          <div class="standby-status-pill-row">
-            <div class="standby-pill" :class="lectorConectado ? 'pill-ok' : 'pill-warn'">
-              <span>{{ lectorConectado ? '🟢 Lector DigitalPersona USB Listo' : '🟠 Conecte el Lector USB' }}</span>
-            </div>
-            <div class="standby-pill pill-ok">
-              <span>📡 Conexión en Tiempo Real Activa</span>
-            </div>
+          <div class="standby-tags">
+            <span class="status-pill-clean" :class="lectorConectado ? 'pill-ready' : 'pill-wait'">
+              {{ lectorConectado ? '✓ Sensor USB Listo' : 'Conecte Sensor USB' }}
+            </span>
+            <span class="status-pill-clean pill-ready">
+              ✓ Red en Tiempo Real
+            </span>
           </div>
         </div>
-      </section>
+      </div>
 
-      <!-- MODO 2: FICHA ACTIVA (Tomando asistencia) -->
-      <template v-else>
-        <!-- ÁREA CENTRAL DE BIOMETRÍA Y FEEDBACK -->
-        <section class="kiosco-center-area">
-          <!-- 1. FEEDBACK LIMPIO: SOLO MENSAJE DE BIENVENIDA -->
-          <transition name="pop-card">
-            <div v-if="ultimaMarcacion" class="kiosco-welcome-card" :class="`welcome-${ultimaMarcacion.tipo}`">
-              <div class="welcome-icon-circle">
-                <span v-if="ultimaMarcacion.tipo === 'exito'" class="icon-glyph">👋</span>
-                <span v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" class="icon-glyph">ℹ️</span>
-                <span v-else class="icon-glyph">⚠️</span>
-              </div>
-
-              <div class="welcome-text-group">
-                <h1 v-if="ultimaMarcacion.tipo === 'exito'" class="welcome-title">
-                  ¡Bienvenido, {{ ultimaMarcacion.nombreCompleto }}!
-                </h1>
-                <h1 v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" class="welcome-title">
-                  Hola, {{ ultimaMarcacion.nombreCompleto }}
-                </h1>
-                <h1 v-else class="welcome-title">
-                  Huella no reconocida
-                </h1>
-
-                <p class="welcome-subtitle">
-                  <span v-if="ultimaMarcacion.tipo === 'exito'">✅ Asistencia registrada correctamente</span>
-                  <span v-else-if="ultimaMarcacion.tipo === 'ya_registrado'">Tu asistencia ya fue registrada el día de hoy</span>
-                  <span v-else>Coloque su dedo firmemente e intente de nuevo</span>
-                </p>
-              </div>
-            </div>
-          </transition>
-
-          <!-- 2. SCANNER VISUAL EN ESPERA DE HUELLA -->
-          <div v-if="!ultimaMarcacion" class="kiosco-scanner-card" :class="{ 'scanner-disabled': !sesionActiva }">
-            <div class="scanner-glow-circle" :class="{ 'glow-active': sesionActiva && capturando, 'glow-processing': procesandoHuella }">
-              <div class="scanner-finger-icon">
-                {{ procesandoHuella ? '⏳' : '🖐️' }}
-              </div>
+      <!-- MODO 2: FICHA ACTIVA -->
+      <div v-else class="scanner-wrapper">
+        <transition name="clean-fade" mode="out-in">
+          <!-- CARD DE CONFIRMACIÓN (RESULTADO) -->
+          <div
+            v-if="ultimaMarcacion"
+            :key="ultimaMarcacion.nombreCompleto + ultimaMarcacion.tipo"
+            class="confirmation-card"
+            :class="`theme-${ultimaMarcacion.tipo}`"
+          >
+            <div class="confirmation-icon">
+              <!-- Éxito -->
+              <svg v-if="ultimaMarcacion.tipo === 'exito'" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+              </svg>
+              <!-- Ya registrado -->
+              <svg v-else-if="ultimaMarcacion.tipo === 'ya_registrado'" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="16" x2="12" y2="12"/>
+                <line x1="12" y1="8" x2="12.01" y2="8"/>
+              </svg>
+              <!-- No reconocida -->
+              <svg v-else viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              </svg>
             </div>
 
-            <div class="scanner-instructions">
-              <h2 v-if="procesandoHuella" class="instruction-title">Verificando identidad biométrica...</h2>
-              <h2 v-else-if="sesionActiva && capturando" class="instruction-title">
-                Coloque su dedo firmemente sobre el sensor
+            <div class="confirmation-body">
+              <div v-if="ultimaMarcacion.tipo === 'exito'">
+                <div class="result-kicker">ASISTENCIA CONFIRMADA</div>
+                <h2 class="result-name">{{ ultimaMarcacion.nombreCompleto }}</h2>
+                <div class="result-badge" :class="ultimaMarcacion.estado === 'Tardanza' ? 'badge-tardanza' : 'badge-presente'">
+                  <span>{{ ultimaMarcacion.estado === 'Tardanza' ? 'Tardanza' : 'Presente' }}</span>
+                  <span class="badge-divider">•</span>
+                  <span>{{ ultimaMarcacion.hora }}</span>
+                </div>
+              </div>
+
+              <div v-else-if="ultimaMarcacion.tipo === 'ya_registrado'">
+                <div class="result-kicker kicker-muted">REGISTRO PREVIO</div>
+                <h2 class="result-name">{{ ultimaMarcacion.nombreCompleto }}</h2>
+                <p class="result-desc">Tu asistencia ya fue confirmada hoy a las {{ ultimaMarcacion.hora }}.</p>
+              </div>
+
+              <div v-else>
+                <div class="result-kicker kicker-warn">LECTURA NO RECONOCIDA</div>
+                <h2 class="result-name">Huella no identificada</h2>
+                <p class="result-desc">Apoye la yema del dedo con firmeza sobre el sensor e intente de nuevo.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCANNER BIOMÉTRICO MINIMALISTA -->
+          <div
+            v-else
+            class="sensor-stage"
+            :class="{ 'sensor-active': sesionActiva && capturando, 'sensor-busy': procesandoHuella, 'sensor-idle': !sesionActiva }"
+          >
+            <div class="sensor-pad">
+              <div class="laser-line" :class="{ 'laser-active': sesionActiva && capturando, 'laser-busy': procesandoHuella }"></div>
+              
+              <!-- VECTOR DE HUELLA MINIMALISTA -->
+              <svg class="sensor-fingerprint" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M12 11c0-1.66-1.34-3-3-3s-3 1.34-3 3c0 2.5 1.5 4.5 3 6.5" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M12 11c0-2.76 2.24-5 5-5s5 2.24 5 5c0 5-2.5 8-5 10" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M8.5 7.5c1-1 2.2-1.5 3.5-1.5s2.5.5 3.5 1.5" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M5 12c0-3.87 3.13-7 7-7s7 3.13 7 7c0 3-.9 5.5-2.3 7.5" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M3 13c0-4.97 4.03-9 9-9s9 4.03 9 9c0 3.5-1.2 6.5-3 9" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.2" d="M12 14c-1.1 0-2 .9-2 2v2c0 .55.45 1 1 1s1-.45 1-1v-2" />
+              </svg>
+
+              <!-- MARCADORES DE ESQUINA LIMPIOS -->
+              <div class="corner-mark cm-tl"></div>
+              <div class="corner-mark cm-tr"></div>
+              <div class="corner-mark cm-bl"></div>
+              <div class="corner-mark cm-br"></div>
+            </div>
+
+            <div class="sensor-prompt-box">
+              <h2 v-if="procesandoHuella" class="prompt-title prompt-pulsing">
+                Verificando...
               </h2>
-              <h2 v-else class="instruction-title text-muted">
+              <h2 v-else-if="sesionActiva && capturando" class="prompt-title">
+                Coloque su huella en el lector
+              </h2>
+              <h2 v-else class="prompt-title prompt-muted">
                 Pase de lista no iniciado
               </h2>
 
-              <p class="instruction-subtitle">
+              <p class="prompt-help">
                 {{
                   sesionActiva
-                    ? 'Mantenga el dedo apoyado en el lector hasta ver la bienvenida.'
-                    : 'Esperando señal de inicio del docente para activar el lector USB.'
+                    ? 'Apoye firmemente la yema del dedo sobre el sensor USB.'
+                    : 'El docente activará la sesión en el aula.'
                 }}
               </p>
             </div>
           </div>
-        </section>
-      </template>
+        </transition>
+      </div>
     </main>
+
+    <!-- PIE DISCRETO Y MINIMALISTA -->
+    <footer class="minimal-footer">
+      <div class="footer-segment">
+        <span class="footer-dot"></span>
+        <span>Validación Biométrica Local</span>
+      </div>
+      <div class="footer-segment">
+        <span>DigitalPersona U.are.U 4500</span>
+      </div>
+      <div class="footer-segment">
+        <span>SENA • Centro de Formación</span>
+      </div>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.kiosco-container {
+/* ========================================================= */
+/* DISEÑO MINIMALISTA Y SOFISTICADO (ESTILO LINEAR / VERCEL) */
+/* ========================================================= */
+
+.kiosco-minimal {
+  position: relative;
   min-height: 100vh;
-  background: radial-gradient(circle at 50% 10%, #0f172a 0%, #020617 100%);
-  color: #f8fafc;
+  width: 100%;
+  background-color: #09090b; /* Zinc 950 muy profundo y sobrio */
+  color: #fafafa;
   display: flex;
   flex-direction: column;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   user-select: none;
 }
 
-/* HEADER */
-.kiosco-header {
+/* ENCABEZADO MINIMALISTA */
+.minimal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 28px;
-  background: rgba(15, 23, 42, 0.85);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-  backdrop-filter: blur(12px);
+  padding: 18px 36px;
+  background: rgba(15, 15, 18, 0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.kiosco-brand {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
 }
 
-.sena-logo-badge {
-  background: #39a900;
-  color: white;
-  font-weight: 900;
-  font-size: 18px;
+.sena-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 14px;
+  border-radius: 8px;
+}
+
+.sena-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #39a900; /* Verde institucional SENA como único toque de color */
+  box-shadow: 0 0 8px rgba(57, 169, 0, 0.6);
+}
+
+.sena-name {
+  font-size: 13px;
+  font-weight: 800;
   letter-spacing: 1px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  box-shadow: 0 0 20px rgba(57, 169, 0, 0.4);
-}
-
-.kiosco-badge-tag {
-  font-size: 11px;
-  font-weight: 700;
-  color: #38bdf8;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-}
-
-.kiosco-brand-info h2 {
-  margin: 2px 0 6px 0;
-  font-size: 20px;
-  font-weight: 700;
   color: #ffffff;
 }
 
-.kiosco-meta-tags {
+.class-info {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #94a3b8;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.meta-tag strong {
-  color: #e2e8f0;
+.class-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #f4f4f5;
+  letter-spacing: -0.3px;
+}
+
+.class-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.badge-item {
+  color: #a1a1aa;
+}
+
+.badge-separator {
+  color: #52525b;
+  font-size: 10px;
 }
 
 /* HEADER DERECHA */
-.kiosco-header-right {
+.header-right {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 24px;
 }
 
-.live-clock-card {
+.clock-box {
   text-align: right;
-  background: rgba(30, 41, 59, 0.6);
-  padding: 8px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(71, 85, 105, 0.5);
 }
 
-.live-clock-time {
+.clock-display {
   font-size: 22px;
-  font-weight: 800;
-  color: #38bdf8;
+  font-weight: 700;
+  color: #fafafa;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 
-.live-clock-date {
+.date-display {
   font-size: 11px;
-  color: #94a3b8;
-  text-transform: uppercase;
+  color: #71717a;
+  text-transform: capitalize;
 }
 
-.kiosco-actions {
+.header-buttons {
   display: flex;
   gap: 8px;
 }
 
-.btn-kiosco-tool {
-  background: #1e293b;
-  color: #cbd5e1;
-  border: 1px solid #334155;
+.btn-clean {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #18181b;
+  color: #d4d4d8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 8px 14px;
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s ease;
 }
 
-.btn-kiosco-tool:hover {
-  background: #334155;
-  color: white;
+.btn-clean:hover {
+  background: #27272a;
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.btn-kiosco-exit {
-  background: #881337;
-  color: #fecdd3;
-  border: 1px solid #9f1239;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
+.btn-exit:hover {
+  background: #27272a;
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
-.btn-kiosco-exit:hover {
-  background: #9f1239;
-  color: white;
-}
-
-/* BANNER DE ESTADO */
-.kiosco-session-banner {
+/* BARRA DE ESTADO */
+.status-strip {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 28px;
-  font-size: 13px;
+  padding: 8px 36px;
+  background: #0f0f12;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  color: #a1a1aa;
 }
 
-.banner-active {
-  background: linear-gradient(90deg, rgba(22, 101, 52, 0.3) 0%, rgba(15, 23, 42, 0.6) 100%);
-  border-bottom: 1px solid rgba(34, 197, 94, 0.3);
-  color: #86efac;
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.banner-waiting {
-  background: linear-gradient(90deg, rgba(161, 98, 7, 0.25) 0%, rgba(15, 23, 42, 0.6) 100%);
-  border-bottom: 1px solid rgba(234, 179, 8, 0.3);
-  color: #fde047;
-}
-
-.status-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
+.indicator-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  margin-right: 8px;
 }
 
-.dot-pulsing {
+.dot-active {
   background: #22c55e;
-  box-shadow: 0 0 12px #22c55e;
-  animation: pulse 1.5s infinite;
+  box-shadow: 0 0 6px #22c55e;
 }
 
-.dot-idle {
+.dot-standby {
   background: #eab308;
 }
 
-@keyframes pulse {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.2); opacity: 1; }
-  100% { transform: scale(0.95); opacity: 0.8; }
+.indicator-label {
+  font-weight: 500;
+  color: #d4d4d8;
 }
 
-.banner-reader-status {
-  color: #94a3b8;
+.hardware-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #71717a;
+  font-size: 11px;
+}
+
+.hw-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.hw-on {
+  background: #22c55e;
+}
+
+.hw-off {
+  background: #ef4444;
+}
+
+/* CUERPO PRINCIPAL */
+.minimal-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.standby-wrapper,
+.scanner-wrapper {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  justify-content: center;
+}
+
+/* CARD DE ESPERA */
+.standby-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: #121215;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 48px 40px;
+  width: 100%;
+}
+
+.standby-icon-box {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #a1a1aa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.standby-headline {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #fafafa;
+}
+
+.standby-subline {
+  margin: 0 0 24px 0;
+  font-size: 14px;
+  color: #71717a;
+  line-height: 1.5;
+  max-width: 440px;
+}
+
+.standby-tags {
+  display: flex;
+  gap: 10px;
+}
+
+.status-pill-clean {
+  padding: 6px 14px;
+  border-radius: 6px;
   font-size: 12px;
+  font-weight: 600;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #a1a1aa;
+}
+
+.pill-ready {
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.25);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.pill-wait {
+  color: #fde047;
+  border-color: rgba(234, 179, 8, 0.25);
+}
+
+/* SENSOR STAGE (MINIMALISTA) */
+.sensor-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: #121215;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  padding: 56px 48px;
+  width: 100%;
+  transition: all 0.25s ease;
+}
+
+.sensor-pad {
+  position: relative;
+  width: 160px;
+  height: 200px;
+  border-radius: 24px;
+  background: #09090b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 28px;
+  overflow: hidden;
+  transition: all 0.25s ease;
+}
+
+.sensor-active .sensor-pad {
+  border-color: #39a900;
+  box-shadow: 0 0 25px rgba(57, 169, 0, 0.15);
+}
+
+.sensor-busy .sensor-pad {
+  border-color: #ffffff;
+  box-shadow: 0 0 25px rgba(255, 255, 255, 0.15);
+}
+
+.laser-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #39a900;
+  box-shadow: 0 0 10px #39a900;
+  top: 0;
+  opacity: 0;
+  z-index: 2;
+}
+
+.laser-active {
+  opacity: 1;
+  animation: cleanLaser 2.2s infinite ease-in-out;
+}
+
+.laser-busy {
+  opacity: 1;
+  background: #ffffff;
+  box-shadow: 0 0 12px #ffffff;
+  animation: cleanLaser 0.7s infinite ease-in-out;
+}
+
+@keyframes cleanLaser {
+  0% { top: 6%; opacity: 0.4; }
+  50% { top: 92%; opacity: 1; }
+  100% { top: 6%; opacity: 0.4; }
+}
+
+.sensor-fingerprint {
+  width: 100px;
+  height: 100px;
+  color: #3f3f46;
+  transition: all 0.25s ease;
+}
+
+.sensor-active .sensor-fingerprint {
+  color: #39a900;
+}
+
+.sensor-busy .sensor-fingerprint {
+  color: #fafafa;
+  transform: scale(1.03);
+}
+
+/* MARCADORES DE ESQUINA */
+.corner-mark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.sensor-active .corner-mark {
+  border-color: #39a900;
+}
+
+.cm-tl { top: 10px; left: 10px; border-top: 1.5px solid; border-left: 1.5px solid; }
+.cm-tr { top: 10px; right: 10px; border-top: 1.5px solid; border-right: 1.5px solid; }
+.cm-bl { bottom: 10px; left: 10px; border-bottom: 1.5px solid; border-left: 1.5px solid; }
+.cm-br { bottom: 10px; right: 10px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
+
+/* TEXTOS DEL SENSOR */
+.prompt-title {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fafafa;
+  letter-spacing: -0.3px;
+}
+
+.prompt-help {
+  margin: 0;
+  font-size: 13px;
+  color: #71717a;
+}
+
+.prompt-pulsing {
+  color: #ffffff;
+  animation: textPulse 1s infinite;
+}
+
+@keyframes textPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.prompt-muted {
+  color: #71717a;
+}
+
+/* CARD DE CONFIRMACIÓN (RESULTADO) */
+.confirmation-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  background: #121215;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  padding: 48px 40px;
+  width: 100%;
+}
+
+.theme-exito {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.05) 0%, #121215 100%);
+}
+
+.theme-ya_registrado {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.theme-no_reconocida {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.05) 0%, #121215 100%);
+}
+
+.confirmation-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  background: #18181b;
+}
+
+.theme-exito .confirmation-icon {
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.theme-ya_registrado .confirmation-icon {
+  color: #a1a1aa;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.theme-no_reconocida .confirmation-icon {
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.result-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #22c55e;
+  margin-bottom: 6px;
+}
+
+.kicker-muted {
+  color: #a1a1aa;
+}
+
+.kicker-warn {
+  color: #f59e0b;
+}
+
+.result-name {
+  margin: 0 0 16px 0;
+  font-size: 30px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.4px;
+}
+
+.result-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.badge-presente {
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.badge-tardanza {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde047;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.badge-divider {
+  opacity: 0.5;
+}
+
+.result-desc {
+  margin: 0;
+  font-size: 14px;
+  color: #a1a1aa;
+}
+
+/* PIE MINIMALISTA */
+.minimal-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 28px;
+  padding: 14px 36px;
+  background: #09090b;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  color: #52525b;
+}
+
+.footer-segment {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-/* CUERPO PRINCIPAL */
-.kiosco-main-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 24px 28px;
-}
-
-.kiosco-center-area {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 380px;
-}
-
-/* STANDBY CARD */
-.kiosco-standby-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  background: rgba(30, 41, 59, 0.45);
-  border: 1.5px dashed rgba(56, 189, 248, 0.4);
-  border-radius: 28px;
-  padding: 56px 40px;
-  max-width: 680px;
-  width: 100%;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-
-.standby-pulse-beacon {
-  width: 110px;
-  height: 110px;
+.footer-dot {
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
-  background: rgba(15, 23, 42, 0.8);
-  border: 2px solid #38bdf8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 24px;
-  box-shadow: 0 0 35px rgba(56, 189, 248, 0.4);
-  animation: glowPulse 2.5s infinite;
+  background: #39a900;
 }
 
-.standby-icon {
-  font-size: 50px;
+/* TRANSICIONES LIMPIAS */
+.clean-fade-enter-active,
+.clean-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.standby-title {
-  font-size: 28px;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 12px 0;
+.clean-fade-enter-from {
+  opacity: 0;
+  transform: scale(0.97);
 }
 
-.standby-subtitle {
-  font-size: 14px;
-  color: #94a3b8;
-  max-width: 500px;
-  line-height: 1.6;
-  margin: 0 0 28px 0;
+.clean-fade-leave-to {
+  opacity: 0;
+  transform: scale(1.02);
 }
 
-.standby-status-pill-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.standby-pill {
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.pill-ok {
-  background: rgba(34, 197, 94, 0.15);
-  border: 1px solid rgba(34, 197, 94, 0.4);
-  color: #86efac;
-}
-
-.pill-warn {
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.4);
-  color: #fde047;
-}
-
-/* SCANNER CARD */
-.kiosco-scanner-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  background: rgba(30, 41, 59, 0.4);
-  border: 1.5px dashed rgba(71, 85, 105, 0.5);
-  border-radius: 24px;
-  padding: 48px 60px;
-  max-width: 650px;
-  width: 100%;
-}
-
-.scanner-glow-circle {
-  width: 130px;
-  height: 130px;
-  border-radius: 50%;
-  background: rgba(15, 23, 42, 0.8);
-  border: 3px solid #334155;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 24px;
-  transition: all 0.3s;
-}
-
-.glow-active {
-  border-color: #39a900;
-  box-shadow: 0 0 35px rgba(57, 169, 0, 0.45);
-  animation: glowPulse 2s infinite;
-}
-
-.glow-processing {
-  border-color: #38bdf8;
-  box-shadow: 0 0 35px rgba(56, 189, 248, 0.5);
-  animation: rotate 1s infinite linear;
-}
-
-@keyframes glowPulse {
-  0% { box-shadow: 0 0 15px rgba(57, 169, 0, 0.3); }
-  50% { box-shadow: 0 0 45px rgba(57, 169, 0, 0.6); }
-  100% { box-shadow: 0 0 15px rgba(57, 169, 0, 0.3); }
-}
-
-.scanner-finger-icon {
-  font-size: 58px;
-}
-
-.instruction-title {
-  font-size: 26px;
-  font-weight: 800;
-  color: #f8fafc;
-  margin: 0 0 10px 0;
-}
-
-.instruction-subtitle {
-  font-size: 14px;
-  color: #94a3b8;
-  margin: 0;
-  max-width: 480px;
-}
-
-.scanner-disabled {
-  opacity: 0.6;
-}
-
-/* WELCOME CARD (LIMPIA Y ELEGANTE) */
-.kiosco-welcome-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  background: #0f172a;
-  border-radius: 28px;
-  padding: 48px 56px;
-  max-width: 620px;
-  width: 100%;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
-  border: 2px solid #334155;
-  transition: all 0.3s ease;
-}
-
-.welcome-exito {
-  border-color: #22c55e;
-  background: linear-gradient(145deg, rgba(20, 83, 45, 0.55) 0%, #0f172a 100%);
-  box-shadow: 0 0 60px rgba(34, 197, 94, 0.4);
-}
-
-.welcome-ya_registrado {
-  border-color: #38bdf8;
-  background: linear-gradient(145deg, rgba(12, 74, 110, 0.55) 0%, #0f172a 100%);
-  box-shadow: 0 0 60px rgba(56, 189, 248, 0.4);
-}
-
-.welcome-no_reconocida {
-  border-color: #f59e0b;
-  background: linear-gradient(145deg, rgba(120, 53, 15, 0.55) 0%, #0f172a 100%);
-  box-shadow: 0 0 60px rgba(245, 158, 11, 0.4);
-}
-
-.welcome-icon-circle {
-  width: 90px;
-  height: 90px;
-  border-radius: 50%;
-  background: rgba(15, 23, 42, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 20px;
-  border: 2px solid currentColor;
-}
-
-.welcome-exito .welcome-icon-circle {
-  border-color: #22c55e;
-}
-
-.welcome-ya_registrado .welcome-icon-circle {
-  border-color: #38bdf8;
-}
-
-.welcome-no_reconocida .welcome-icon-circle {
-  border-color: #f59e0b;
-}
-
-.icon-glyph {
-  font-size: 48px;
-}
-
-.welcome-text-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.welcome-title {
-  font-size: 32px;
-  font-weight: 900;
-  color: #ffffff;
-  margin: 0 0 10px 0;
-  letter-spacing: -0.5px;
-}
-
-.welcome-subtitle {
-  font-size: 16px;
-  color: #cbd5e1;
-  margin: 0;
-  font-weight: 500;
-}
-
-/* Transiciones */
-.pop-card-enter-active {
-  animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-.pop-card-leave-active {
-  animation: popOut 0.2s ease-in;
-}
-
-@keyframes popIn {
-  from { transform: scale(0.85); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
-}
-
-@keyframes popOut {
-  from { transform: scale(1); opacity: 1; }
-  to { transform: scale(0.85); opacity: 0; }
+/* RESPONSIVE */
+@media (max-width: 800px) {
+  .minimal-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .minimal-footer {
+    flex-direction: column;
+    gap: 4px;
+  }
 }
 </style>
