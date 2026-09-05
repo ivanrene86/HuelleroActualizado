@@ -2,61 +2,101 @@ import Admin from '../models/Admin.js'
 import Instructor from '../models/Instructor.js'
 import Estudiante from '../models/Estudiante.js'
 import Ficha from '../models/Ficha.js'
+import { generarToken } from '../middlewares/auth.js'
+import { hashPassword, verifyAndUpgradePassword } from '../services/passwordService.js'
 
 export async function login(req, res) {
   try {
     const { correo, password } = req.body
-    if (!correo || !password) {
-      return res.status(400).json({ error: 'Correo y contraseña requeridos' })
+    if (!correo) {
+      return res.status(400).json({ error: 'Correo o número de documento requerido' })
     }
 
-    // 1. Buscar en Administradores
-    const admin = await Admin.findOne({ correo, password })
+    const identificador = String(correo).trim()
+
+    // 1. Buscar en Administradores (por correo)
+    const admin = await Admin.findOne({ correo: identificador })
     if (admin) {
-      return res.json({
-        ok: true,
-        usuario: { id: admin._id, nombre: admin.nombre, correo: admin.correo, rol: admin.rol || 'Administrador' },
-        admin: { id: admin._id, nombre: admin.nombre, correo: admin.correo, rol: admin.rol || 'Administrador' }
-      })
+      if (!password) {
+        return res.status(400).json({ error: 'Contraseña requerida para cuenta de Administrador' })
+      }
+      const passOk = await verifyAndUpgradePassword(admin, password)
+      if (passOk) {
+        const payload = { id: admin._id, nombre: admin.nombre, correo: admin.correo, rol: admin.rol || 'Administrador' }
+        const token = generarToken(payload)
+        return res.json({
+          ok: true,
+          token,
+          usuario: payload,
+          admin: payload
+        })
+      }
+      return res.status(401).json({ error: 'Contraseña incorrecta' })
     }
 
-    // 2. Buscar en Instructores
-    const instructor = await Instructor.findOne({ correo, password })
+    // 2. Buscar en Instructores (por correo o número de documento)
+    const instructor = await Instructor.findOne({
+      $or: [{ correo: identificador }, { numeroDocumento: identificador }]
+    })
     if (instructor) {
       if (instructor.estado === 'Inactivo') {
         return res.status(403).json({ error: 'Tu cuenta de instructor se encuentra inactiva' })
       }
-      const fichaLider = await Ficha.findOne({ instructorLiderId: instructor._id })
-      const esLider = !!(instructor.esLider || fichaLider)
-      const nombreCompleto = `${instructor.nombres} ${instructor.apellidos}`
-      return res.json({
-        ok: true,
-        usuario: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor', esLider, rolDetallado: esLider ? 'Instructor Líder' : 'Instructor Común' },
-        admin: { id: instructor._id, nombre: nombreCompleto, correo: instructor.correo, rol: 'Instructor', esLider, rolDetallado: esLider ? 'Instructor Líder' : 'Instructor Común' }
-      })
+      if (!password) {
+        return res.status(400).json({ error: 'Contraseña requerida para cuenta de Instructor' })
+      }
+      const passOk = await verifyAndUpgradePassword(instructor, password)
+      if (passOk) {
+        const fichaLider = await Ficha.findOne({ instructorLiderId: instructor._id })
+        const esLider = !!(instructor.esLider || fichaLider)
+        const nombreCompleto = `${instructor.nombres} ${instructor.apellidos}`
+        const payload = {
+          id: instructor._id,
+          nombre: nombreCompleto,
+          correo: instructor.correo,
+          rol: 'Instructor',
+          esLider,
+          rolDetallado: esLider ? 'Instructor Líder' : 'Instructor Común'
+        }
+        const token = generarToken(payload)
+        return res.json({
+          ok: true,
+          token,
+          usuario: payload,
+          admin: payload
+        })
+      }
+      return res.status(401).json({ error: 'Contraseña incorrecta' })
     }
 
-    // 3. Buscar en Estudiantes (por correo o número de documento)
+    // 3. Buscar en Estudiantes / Aprendices (Consulta directa por documento o correo, sin requerir contraseña)
     const estudiante = await Estudiante.findOne({
-      $or: [{ correo }, { numeroDocumento: correo }]
+      $or: [{ numeroDocumento: identificador }, { correo: identificador }]
     })
     if (estudiante) {
       if (estudiante.estado !== 'Activo') {
-        return res.status(403).json({ error: `Tu cuenta de estudiante se encuentra en estado ${estudiante.estado}` })
+        return res.status(403).json({ error: `Tu cuenta de aprendiz se encuentra en estado ${estudiante.estado}` })
       }
-      // Contraseña del estudiante: su número de documento o clave por defecto
-      const passCorrecta = password === estudiante.numeroDocumento || password === 'sena2026'
-      if (passCorrecta) {
-        const nombreCompleto = `${estudiante.nombres} ${estudiante.apellidos}`
-        return res.json({
-          ok: true,
-          usuario: { id: estudiante._id, nombre: nombreCompleto, correo: estudiante.correo, rol: 'Estudiante', estudianteId: estudiante._id },
-          admin: { id: estudiante._id, nombre: nombreCompleto, correo: estudiante.correo, rol: 'Estudiante', estudianteId: estudiante._id }
-        })
+
+      // Los aprendices acceden de forma directa por documento para consulta
+      const nombreCompleto = `${estudiante.nombres} ${estudiante.apellidos}`
+      const payload = {
+        id: estudiante._id,
+        nombre: nombreCompleto,
+        correo: estudiante.correo,
+        rol: 'Estudiante',
+        estudianteId: estudiante._id
       }
+      const token = generarToken(payload)
+      return res.json({
+        ok: true,
+        token,
+        usuario: payload,
+        admin: payload
+      })
     }
 
-    return res.status(401).json({ error: 'Correo/Documento o contraseña incorrectos' })
+    return res.status(401).json({ error: 'Usuario no encontrado o credenciales incorrectas' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -77,12 +117,15 @@ export async function updatePerfil(req, res) {
     const { nombre, telefono, correo, password } = req.body
     let admin = await Admin.findOne()
     if (!admin) {
-      admin = new Admin({ nombre, telefono, correo, password: password || 'sena2026ADSO' })
+      const passHash = password ? await hashPassword(password) : await hashPassword('sena2026ADSO')
+      admin = new Admin({ nombre, telefono, correo, password: passHash })
     } else {
       if (nombre !== undefined) admin.nombre = nombre
       if (telefono !== undefined) admin.telefono = telefono
       if (correo !== undefined) admin.correo = correo
-      if (password) admin.password = password
+      if (password) {
+        admin.password = await hashPassword(password)
+      }
     }
     await admin.save()
     res.json({ ok: true, perfil: { nombre: admin.nombre, rol: admin.rol, telefono: admin.telefono, correo: admin.correo } })
@@ -116,34 +159,32 @@ export async function resetPassword(req, res) {
       return res.status(400).json({ error: 'Correo y nueva contraseña requeridos' })
     }
 
+    if (nuevaPassword.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' })
+    }
+
+    const nuevaHash = await hashPassword(nuevaPassword)
     let encontrado = false
 
     const admin = await Admin.findOne({ correo })
     if (admin) {
-      admin.password = nuevaPassword
+      admin.password = nuevaHash
       await admin.save()
       encontrado = true
     }
 
     const instructor = await Instructor.findOne({ correo })
     if (instructor) {
-      instructor.password = nuevaPassword
+      instructor.password = nuevaHash
       await instructor.save()
       encontrado = true
     }
 
-    const estudiante = await Estudiante.findOne({ correo })
-    if (estudiante) {
-      estudiante.password = nuevaPassword
-      await estudiante.save()
-      encontrado = true
-    }
-
     if (!encontrado) {
-      return res.status(404).json({ error: 'No se encontró ninguna cuenta con este correo' })
+      return res.status(404).json({ error: 'No se encontró ninguna cuenta de docente o administrador con este correo' })
     }
 
-    res.json({ ok: true, message: 'Contraseña restablecida exitosamente' })
+    res.json({ ok: true, message: 'Contraseña restablecida exitosamente con cifrado seguro' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -171,15 +212,11 @@ export async function cambiarPassword(req, res) {
     } else if (rolNormalizado.includes('instructor')) {
       if (id) usuario = await Instructor.findById(id)
       if (!usuario && correo) usuario = await Instructor.findOne({ correo })
-    } else if (rolNormalizado.includes('estudiante')) {
-      if (id) usuario = await Estudiante.findById(id)
-      if (!usuario && correo) usuario = await Estudiante.findOne({ $or: [{ correo }, { numeroDocumento: correo }] })
     } else {
-      // Búsqueda en cascada
       if (id) {
-        usuario = await Admin.findById(id) || await Instructor.findById(id) || await Estudiante.findById(id)
+        usuario = await Admin.findById(id) || await Instructor.findById(id)
       } else if (correo) {
-        usuario = await Admin.findOne({ correo }) || await Instructor.findOne({ correo }) || await Estudiante.findOne({ correo })
+        usuario = await Admin.findOne({ correo }) || await Instructor.findOne({ correo })
       }
     }
 
@@ -187,19 +224,17 @@ export async function cambiarPassword(req, res) {
       return res.status(404).json({ error: 'Usuario no encontrado.' })
     }
 
-    // 2. Verificar si la contraseña actual coincide
-    const passwordActualValida = (usuario.password || 'sena2026') === passwordActual ||
-      (usuario.numeroDocumento && usuario.numeroDocumento === passwordActual)
-
-    if (!passwordActualValida) {
+    // 2. Verificar si la contraseña actual coincide mediante verifyAndUpgradePassword
+    const passOk = await verifyAndUpgradePassword(usuario, passwordActual)
+    if (!passOk) {
       return res.status(400).json({ error: 'La contraseña actual no coincide. Verifica e intenta de nuevo.' })
     }
 
-    // 3. Asignar y guardar la nueva contraseña
-    usuario.password = nuevaPassword
+    // 3. Hashear y guardar la nueva contraseña con bcrypt
+    usuario.password = await hashPassword(nuevaPassword)
     await usuario.save()
 
-    return res.json({ ok: true, message: '¡Contraseña actualizada exitosamente!' })
+    return res.json({ ok: true, message: '¡Contraseña actualizada exitosamente con cifrado seguro!' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

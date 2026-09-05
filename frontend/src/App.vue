@@ -128,13 +128,22 @@ async function verificarEstadoRealSistema() {
   }
 }
 
+function manejarExpiracionAuth(e) {
+  cerrarSesion()
+  if (e?.detail) {
+    alert(e.detail)
+  }
+}
+
 onMounted(() => {
   verificarEstadoRealSistema()
   statusInterval = setInterval(verificarEstadoRealSistema, 3000)
+  window.addEventListener('auth-expired', manejarExpiracionAuth)
 })
 
 onUnmounted(() => {
   if (statusInterval) clearInterval(statusInterval)
+  window.removeEventListener('auth-expired', manejarExpiracionAuth)
 })
 
 function colorSemaforoClass(color) {
@@ -167,6 +176,7 @@ function cerrarSesion() {
   usuario.value = null
   sessionStorage.removeItem('admin_auth')
   sessionStorage.removeItem('user_data')
+  sessionStorage.removeItem('auth_token')
   currentView.value = 'perfil'
   detenerTimerInactividad()
 }

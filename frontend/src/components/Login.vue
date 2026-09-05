@@ -54,6 +54,9 @@ async function iniciarSesionPersonal() {
     const res = await api.auth.login(form.correo, form.password)
     if (res.ok) {
       sessionStorage.setItem('admin_auth', 'true')
+      if (res.token) {
+        sessionStorage.setItem('auth_token', res.token)
+      }
       const userData = res.usuario || res.admin
       sessionStorage.setItem('user_data', JSON.stringify(userData))
       emit('login-success', userData)
@@ -77,10 +80,13 @@ async function consultarAprendiz() {
   loading.value = true
   const doc = form.documentoAprendiz.trim()
   try {
-    // Intentar login de estudiante pasando el documento como usuario y clave
-    const res = await api.auth.login(doc, doc)
+    // Consulta directa de estudiante por documento sin contraseña
+    const res = await api.auth.login(doc)
     if (res.ok && res.usuario) {
       sessionStorage.setItem('admin_auth', 'true')
+      if (res.token) {
+        sessionStorage.setItem('auth_token', res.token)
+      }
       sessionStorage.setItem('user_data', JSON.stringify(res.usuario))
       emit('login-success', res.usuario)
     }

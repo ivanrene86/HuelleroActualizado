@@ -1,13 +1,38 @@
 import { Router } from 'express'
 import * as instructorController from '../controllers/instructorController.js'
 import { validarCamposRequeridos, validarEmail } from '../middlewares/validator.js'
+import { autenticarJWT, verificarRol } from '../middlewares/auth.js'
 
 const router = Router()
 
-router.get('/', instructorController.getInstructores)
-router.post('/', validarCamposRequeridos(['nombres', 'apellidos', 'numeroDocumento', 'correo']), validarEmail('correo'), instructorController.createInstructor)
-router.put('/:id', instructorController.updateInstructor)
-router.delete('/:id', instructorController.deleteInstructor)
-router.post('/importar', instructorController.importarInstructores)
+// Lectura de instructores (requiere autenticación)
+router.get('/', autenticarJWT, instructorController.getInstructores)
+
+// Mutaciones de instructores (restringidas a Administrador)
+router.post('/',
+  autenticarJWT,
+  verificarRol(['Administrador']),
+  validarCamposRequeridos(['nombres', 'apellidos', 'numeroDocumento', 'correo']),
+  validarEmail('correo'),
+  instructorController.createInstructor
+)
+
+router.put('/:id',
+  autenticarJWT,
+  verificarRol(['Administrador', 'Instructor']),
+  instructorController.updateInstructor
+)
+
+router.delete('/:id',
+  autenticarJWT,
+  verificarRol(['Administrador']),
+  instructorController.deleteInstructor
+)
+
+router.post('/importar',
+  autenticarJWT,
+  verificarRol(['Administrador']),
+  instructorController.importarInstructores
+)
 
 export default router
