@@ -1,7 +1,7 @@
 import { getConfig, iniciarRegistroDispositivo, tieneIdentidad } from './config.js'
 import * as store from './store.js'
 import * as ws from './ws-client.js'
-import { capturarHuella } from './capture.js'
+import { capturarHuella, inicializarCaptura } from './capture.js'
 import { syncPendientes } from './sync.js'
 import { identificarEstudiante } from '../verify.js'
 
@@ -18,6 +18,7 @@ function notificarEstado() {
 
 export async function init() {
   await store.init()
+  inicializarCaptura()
   ws.setOnStatusChange(notificarEstado)
   ws.connect(getConfig())
   syncPendientes()
@@ -49,13 +50,18 @@ export async function capturarYVerificar() {
     return { ok: false, error: 'No hay clase activa en este dispositivo' }
   }
 
-  const imagen = await capturarHuella()
-  if (!imagen) {
-    return { ok: false, error: 'Captura de huella no disponible aún' }
+  let imagen
+  let dpi
+  try {
+    const captura = await capturarHuella()
+    imagen = captura.imagen
+    dpi = captura.dpi
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 
   const plantillas = await store.getPlantillasFicha(clase.fichaId)
-  return identificarEstudiante(imagen, plantillas)
+  return identificarEstudiante(imagen, plantillas, dpi)
 }
 
 export async function loginDocente(correo, password) {
@@ -201,13 +207,14 @@ export async function enrolarEstudiante({ estudianteId, fichaId, dedo }) {
     return { ok: false, error: 'Finaliza la clase activa en este dispositivo antes de enrolar' }
   }
 
-  const imagen = await capturarHuella()
-  if (!imagen) {
-    return { ok: false, error: 'Captura de huella no disponible aún' }
+  try {
+    await capturarHuella()
+  } catch (err) {
+    return { ok: false, error: err.message }
   }
 
-  // TODO Fase 5: transformar la imagen en template con el motor local y llamar guardarTemplate.
-  return { ok: false, error: 'Captura de huella no disponible aún' }
+  // TODO Fase 5: transformar la imagen en template con el motor local (fingerprint.js) y llamar guardarTemplate.
+  return { ok: false, error: 'Enrolamiento aún no implementado: falta convertir la imagen en template' }
 }
 
 export function logoutDocente() {

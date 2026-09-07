@@ -9,7 +9,7 @@ function toEngineRecord(record) {
   }
 }
 
-export function identificarEstudiante(imageBase64, estudiantesLocales) {
+export function identificarEstudiante(imageBase64, estudiantesLocales, dpi = 500) {
   const registrosMotor = (estudiantesLocales || []).map(toEngineRecord)
-  return verifyFingerprint(imageBase64, registrosMotor)
+  return verifyFingerprint(imageBase64, registrosMotor, dpi)
 }

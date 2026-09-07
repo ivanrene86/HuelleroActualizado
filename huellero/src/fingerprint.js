@@ -116,7 +116,7 @@ function dpfjError(code) {
   return errors[code] || `Error desconocido (0x${(code >>> 0).toString(16)})`
 }
 
-function pngToFmd(pngBase64) {
+function pngToFmd(pngBase64, dpi = 500) {
   if (!dpfj_create_fmd_from_raw) return null
 
   const pngBuf = bufFromBase64(pngBase64)
@@ -138,13 +138,13 @@ function pngToFmd(pngBase64) {
     grayPixels[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b)
   }
 
-  console.log(`[fingerprint] PNG: ${width}x${height} dpi=500 bytes=${grayPixels.length}`)
+  console.log(`[fingerprint] PNG: ${width}x${height} dpi=${dpi} bytes=${grayPixels.length}`)
 
   const fmdBuf = Buffer.alloc(MAX_FMD_SIZE)
   const sizeBuf = makeSizeBuf(MAX_FMD_SIZE)
 
   const result = dpfj_create_fmd_from_raw(
-    grayPixels, grayPixels.length, width, height, 500,
+    grayPixels, grayPixels.length, width, height, dpi,
     DPFJ_POSITION_UNKNOWN, 0, DPFJ_FMD_ANSI_378_2004,
     fmdBuf, sizeBuf
   )
@@ -201,13 +201,13 @@ export function startSession(studentId, name, documento, dedo) {
   return { sessionId, capturesNeeded: 4 }
 }
 
-export function addCapture(sessionId, imageBase64) {
+export function addCapture(sessionId, imageBase64, dpi = 500) {
   const session = sessions[sessionId]
   if (!session || !session.active) {
     return { error: 'Sesión de enrollment no encontrada o ya finalizada' }
   }
 
-  const fmdBuf = pngToFmd(imageBase64)
+  const fmdBuf = pngToFmd(imageBase64, dpi)
   if (!fmdBuf) {
     return { error: 'No se pudo extraer características de la huella. Intenta de nuevo.' }
   }
@@ -306,8 +306,8 @@ export function cancelSession(sessionId) {
   return { ok: true, message: 'Enrollment cancelado.' }
 }
 
-export function verifyFingerprint(imageBase64, enrolledStudents) {
-  const probeFmd = pngToFmd(imageBase64)
+export function verifyFingerprint(imageBase64, enrolledStudents, dpi = 500) {
+  const probeFmd = pngToFmd(imageBase64, dpi)
   if (!probeFmd) {
     return { match: false, error: 'No se pudo extraer características de la huella' }
   }

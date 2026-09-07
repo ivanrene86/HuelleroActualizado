@@ -223,7 +223,7 @@ Huellero → Backend:
 4. El enrolamiento ocurre **físicamente en el PC que tiene el lector**.
 5. El backend almacena finalmente el template en MongoDB.
 
-`[PENDIENTE]` — Implementar el bucle de captura de múltiples muestras en el huellero (corresponde a `capture.js`, que hoy es un stub que devuelve `null`).
+`[PENDIENTE]` — Implementar el bucle de captura de múltiples muestras en el huellero para el enrolamiento (la captura de una sola imagen ya está implementada en `capture.js` desde la Fase 5; falta el loop de `addCapture` para componer el template de enrolamiento).
 
 # Huellas y templates
 
@@ -231,6 +231,14 @@ Huellero → Backend:
 - `[DECIDIDO]` — La intención futura es que el **procesamiento biométrico y el acceso al lector vivan en la aplicación local** (Opción A: enrolamiento en la app huellero).
 - `[DECIDIDO]` — El backend central **no debe depender de `dpfj.dll`** una vez terminada la migración (el backend va a la nube, donde esas DLLs no existirán).
 - `[PENDIENTE]` — Añadir el campo `metodo: 'HUELLA' | 'MANUAL'` al modelo `Asistencia` para auditoría.
+
+> **[DECIDIDO/ACLARACIÓN] (2026-09-07) — Estado real del flujo Web SDK del navegador** (`PanelInstructor.vue`, `KioscoAsistencia.vue`, rutas `/estudiantes/enroll-*`, `/estudiantes/verify`):
+>
+> - El código de este flujo **SIGUE PRESENTE** en el repositorio (no fue eliminado) y sigue siendo técnicamente alcanzable.
+> - Sin embargo, confirmado con el equipo: **NO se usa en producción real hoy**. No hay instructores usándolo activamente con estudiantes reales.
+> - Por lo tanto, es **código presente pero inactivo en la práctica** — no código muerto en sentido estricto (podría reactivarse), pero tampoco la vía de producción actual.
+>
+> **Nota técnica relacionada:** este flujo usa el mismo hardware físico (U.are.U 4500, 700 DPI nativo confirmado vía `dpfpdd_get_device_capabilities`) que el huellero, y llama a la misma función `pngToFmd()` con el default `dpi=500` sin pasar el valor real. Si en algún momento se decide reactivar este flujo del navegador, debe evaluarse si el Web SDK (`Fingerprint.WebApi`) entrega las imágenes ya normalizadas a 500 DPI internamente (en cuyo caso el default actual sería correcto) o si arrastra el mismo mismatch de DPI que se corrigió para el huellero (en cuyo caso habría que pasar el DPI real ahí también). Esto **NO se investigó todavía** — queda como `[PENDIENTE]` si el flujo llega a reactivarse en el futuro.
 
 # Estado actual
 
@@ -241,6 +249,8 @@ Huellero → Backend:
 - El original **NO fue modificado**.
 
 > **Re-sincronización (2026-08-26):** el backend original recibió una corrección crítica de seguridad: el umbral de aceptación de huellas (`MATCH_THRESHOLD`) se subió de `~50%` (`0x3FFFFFFF`) a un valor cercano al `100%` (`21474`, FAR 1/100.000, configurable vía `BIOMETRIC_MATCH_THRESHOLD`). `huellero/src/fingerprint.js` fue re-sincronizado desde `backend/services/fingerprint.js` y **ambos archivos vuelven a ser byte-idénticos**. Nota: durante el merge se perdió la declaración `let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2`; fue restaurada para evitar un `ReferenceError` y que ambos archivos coincidan.
+
+> **Corrección de mismatch de DPI (2026-09-07):** se corrigió la inconsistencia de resolución entre captura y extracción de características. `pngToFmd()` hardcodeaba `500` DPI; ahora la resolución es **parametrizable** — `pngToFmd(pngBase64, dpi = 500)`, `addCapture(sessionId, imageBase64, dpi = 500)` y `verifyFingerprint(imageBase64, enrolledStudents, dpi = 500)` — manteniendo `500` como default para no romper los callers existentes del backend (flujo Web SDK, que no pasan valor explícito). El lector **U.are.U 4500 real solo soporta `700` DPI nativo** (confirmado vía `dpfpdd_get_device_capabilities` → `resolution_cnt = 1`, `resolutions = [700]`; `500` NO está disponible). Por eso `huellero/src/main/capture.js` captura a `700` y ahora `capturarHuella()` devuelve `{ imagen, dpi }`, propagando el `700` a través de `engine.capturarYVerificar()` → `verify.js` → `verifyFingerprint()`. La corrección se hizo **antes** de tener enrolamientos reales en producción (fase de pruebas), por lo que **no requiere migración de datos**. Tras el cambio, `backend/services/fingerprint.js` y `huellero/src/fingerprint.js` vuelven a ser **byte-idénticos**.
 
 **Configuración biométrica — estado del umbral**
 
@@ -280,7 +290,7 @@ Huellero → Backend:
   - `index.js` — arranque de Electron, `BrowserWindow`, registro de manejadores IPC (`huellero:getStatus`, `huellero:capture`, `huellero:login`, `huellero:logout`, `huellero:getFichaLider`, `huellero:getEstudiantesFicha`, `huellero:enrolar`).
   - `engine.js` — orquestador: `init()`, `getStatus()`, `capturarYVerificar()`, `loginDocente()`, `logoutDocente()`, `getFichaLider()`, `getEstudiantesFicha()`, `enrolarEstudiante()`, `guardarTemplate()`.
   - `config.js` — lee `config.json` (`deviceId`, `token`, `backendUrl`, `wsUrl`).
-  - `capture.js`, `store.js`, `sync.js` — stubs (ver sección "Pendiente"). `ws-client.js` — conecta por socket.io (`HELLO`, escucha `ACTIVATE` → `store.setClaseActiva`).
+  - `capture.js` — captura DigitalPersona real (Fase 5, implementada). `store.js`, `sync.js` — stubs (ver sección "Pendiente"). `ws-client.js` — conecta por socket.io (`HELLO`, escucha `ACTIVATE` → `store.setClaseActiva`).
 - **Preload** (`src/preload/index.js`): expone `window.huellero` vía `contextBridge` (`getStatus`, `capturarYVerificar`, `loginDocente`, `logoutDocente`, `getFichaLider`, `getEstudiantesFicha`, `enrolarEstudiante`, `onStatus`).
 - **Renderer** (`src/renderer/src/`):
   - `App.vue` — cambia entre vistas `kiosko`, `login` y `docente`.
@@ -290,6 +300,18 @@ Huellero → Backend:
   - `EnrolarHuellaModal.vue` — modal de enrolamiento (ficha del líder + buscador de estudiantes + dedo + captura).
 - `electron.vite.config.js` — copia las DLLs de `huellero/dll/` a `out/dll/` al compilar.
 
+## Fase 5 — Captura DigitalPersona `[IMPLEMENTADO]`
+
+Captura real funcionando contra el lector físico **U.are.U 4500** mediante `huellero/dll/dpfpdd.dll` (FFI con koffi), verificado con hardware real:
+
+- **Bindings declarados** con las firmas exactas del `dpfpdd.h` oficial (`__stdcall`): `dpfpdd_init`, `dpfpdd_query_devices`, `dpfpdd_open`, `dpfpdd_get_device_capabilities`, `dpfpdd_capture` (síncrona), `dpfpdd_close`.
+- **Flujo por captura**: `query_devices` → `open` → `get_device_capabilities` (resolución) → `capture` → `close` (en `finally`). `dpfpdd_init()` se ejecuta **una sola vez** (idempotente, `inicializarCaptura()`).
+- **Formato de salida**: `dpfpdd_capture` devuelve pixel buffer en escala de grises (8 bpp); `capturarHuella()` lo convierte a **PNG base64** (con `pngjs`) y devuelve `{ imagen, dpi }`.
+- **Corrección de mismatch de DPI**: el 4500 solo soporta **700 DPI nativo** (confirmado vía `dpfpdd_get_device_capabilities` → `resolutions = [700]`); se parametrizó `pngToFmd()`/`addCapture()`/`verifyFingerprint()` con `dpi = 500` por defecto, y `capture.js` pasa `700`. Aplicado **antes** de tener enrolamientos reales → sin migración de datos.
+- **Timeout de 10s** (`dpfpdd_capture` síncrono): al expirar sin dedo lanza `DPFPDD_QUALITY_TIMED_OUT` traducido ("Tiempo de espera agotado…"), sin colgarse.
+- **Bloqueo síncrono vs WebSocket**: verificado que el bloqueo de 10s **no rompe** el socket (el `pingTimeout` del backend es 20s > 10s); no se prioriza `dpfpdd_capture_async` por ahora (queda como mejora futura opcional).
+- **Herramientas**: `socket.io-client` instalado (faltaba), build de electron-vite limpio; headers oficiales del SDK (`dpfpdd.h`, `dpfj.h`) versionados en `docs/sdk-reference/`.
+
 ## Acceso docente (login) `[IMPLEMENTADO]`
 
 - `engine.loginDocente(correo, password)` hace `fetch POST /api/auth/login` al backend.
@@ -298,11 +320,11 @@ Huellero → Backend:
 - Sin conexión devuelve error ("Sin conexión: no se puede validar el acceso docente").
 - En el kiosko se abre con `Ctrl+Shift+L` o con el botón ⚙.
 
-## Enrolamiento (modal docente) `[IMPLEMENTADO]` (captura en stub)
+## Enrolamiento (modal docente) `[PARCIAL]`
 
 - Solo visible si `esLider === true` (`DocenteView.vue`).
 - `engine.getFichaLider()` → `GET /api/fichas/mis-fichas/:instructorId` (filtra `esLider`), y `engine.getEstudiantesFicha(fichaId)` → `GET /api/estudiantes?fichaId=`.
-- `engine.enrolarEstudiante()` rechaza si hay clase activa en el dispositivo (estado local de `store.js`), luego captura (stub Fase 5) y guardaría vía `POST /api/enrolamiento/guardar` (chequeo de duplicados en backend).
+- `engine.enrolarEstudiante()` rechaza si hay clase activa en el dispositivo (estado local de `store.js`), luego captura (Fase 5, ya real) y guardaría vía `POST /api/enrolamiento/guardar` (chequeo de duplicados en backend). **Falta** convertir la imagen capturada en template con el motor local (loop de `addCapture`), por lo que el guardado aún no se concreta.
 
 ## Identidad del dispositivo (Fase 3) `[IMPLEMENTADO]`
 
@@ -327,11 +349,11 @@ Huellero → Backend:
 
 ## Pendiente (stubs) `[PARCIAL]` / `[PENDIENTE]`
 
-- `capture.js` (Fase 5): `capturarHuella()` devuelve `null`; **no hay captura DigitalPersona real**.
 - `ws-client.js` (Fase 6): HELLO autenticado, recibe `ACTIVATE` y reconecta automáticamente (backoff 2s→30s) re-autenticando con `HELLO`; **sin DEACTIVATE ni acks**.
 - `sync.js` (Fase 10): **sincronización no implementada**.
+- `npm audit` (huellero/): **13 vulnerabilidades** — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). `[PENDIENTE]` — sin prisa pero sin olvidarlo; la corrección requiere `npm audit fix --force` con cambios breaking (electron@44, electron-builder@26).
 
-Consecuencia: `capturarYVerificar()` y el enrolamiento siempre fallan con "Captura de huella no disponible aún", porque la captura es stub y `getPlantillasFicha()` devuelve `[]`.
+Consecuencia: la captura ya funciona, pero `capturarYVerificar()` aún no identifica a nadie porque `getPlantillasFicha()` devuelve `[]` (plantillas todavía sin cachear), y el enrolamiento sigue devolviendo error porque falta convertir la imagen en template (loop de `addCapture`).
 
 # Estructura actual de huellero
 
@@ -347,7 +369,7 @@ huellero/
     │   ├── index.js         # arranque, ventana, IPC
     │   ├── engine.js        # orquestador (estado, login, captura + verificación)
     │   ├── config.js        # config.json (deviceId, token, backendUrl, wsUrl) — persistencia + reintento
-    │   ├── capture.js       # stub — captura DigitalPersona (Fase 5)
+    │   ├── capture.js       # captura DigitalPersona real (Fase 5, implementada)
     │   ├── store.js         # persistencia data/*.json (Fase 4)
     │   ├── sync.js          # stub — sincronización (Fase 10)
     │   └── ws-client.js     # socket.io + HELLO autenticado (Fase 6, parcial)
@@ -480,7 +502,7 @@ Backend → Dashboard:
 | 2 | Esqueleto Electron + UI (kiosko, login docente) | ✅ Implementada (verificación koffi/dpfj.dll aún sin confirmar con captura real) |
 | 3 | Configuración e identidad del dispositivo (deviceId + token) | ✅ Implementada — registro, persistencia en `config.json`, reintento |
 | 4 | Almacenamiento local (`data/*.json`) | ✅ Implementada — `store.js` persiste en disco |
-| 5 | Captura DigitalPersona | `[PENDIENTE]` — `capture.js` es stub |
+| 5 | Captura DigitalPersona | ✅ Implementada — captura real vía `dpfpdd.dll` (síncrona, timeout 10s), DPI parametrizado (700) |
 | 6 | WebSocket (cliente huellero + hub backend) | `[PARCIAL]` — HELLO autenticado + ACTIVATE + reconexión con backoff + reenvío de ACTIVATE pendiente; faltan DEACTIVATE y acks |
 | 7 | Activación/desactivación remota | `[PENDIENTE]` |
 | 8 | Enrolamiento remoto | `[PENDIENTE]` |
