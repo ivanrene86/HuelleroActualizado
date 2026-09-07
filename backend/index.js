@@ -2,6 +2,7 @@ import 'dotenv/config'
 import http from 'http'
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
 import mongoose from 'mongoose'
 import nodemailer from 'nodemailer'
 import Admin from './models/Admin.js'
@@ -16,6 +17,7 @@ import clasesRoutes from './routes/clases.js'
 import enrolamientoRoutes from './routes/enrolamiento.js'
 import dispositivosRoutes from './routes/dispositivos.js'
 import { initSocket } from './services/socketService.js'
+import { hashPassword } from './services/passwordService.js'
 
 const app = express()
 const httpServer = http.createServer(app)
@@ -23,6 +25,11 @@ const PORT = process.env.PORT || 3000
 
 initSocket(httpServer)
 
+// Middlewares de seguridad perimetral
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: false
+}))
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
@@ -71,16 +78,22 @@ mongoose.connect(process.env.MONGODB_URI, MONGO_OPTS)
   })
 
 async function iniciarServidor() {
-  const existeAdmin = await Admin.findOne({ correo: 'senahuellero@gmail.com' })
-  if (!existeAdmin) {
-    await new Admin({
+  let admin = await Admin.findOne({ correo: 'senahuellero@gmail.com' })
+  if (!admin) {
+    const passwordHash = await hashPassword('sena2026ADSO')
+    admin = await new Admin({
       nombre: 'Administrador',
       rol: 'Administrador',
       telefono: '',
       correo: 'senahuellero@gmail.com',
-      password: 'sena2026ADSO',
+      password: passwordHash,
     }).save()
-    console.log('Admin por defecto creado')
+    console.log('Admin por defecto creado con contraseña cifrada en bcrypt.')
+  } else if (!admin.password.startsWith('$2a$') && !admin.password.startsWith('$2b$')) {
+    // Si la contraseña anterior estaba en texto plano, encriptarla automáticamente
+    admin.password = await hashPassword(admin.password)
+    await admin.save()
+    console.log('Contraseña de Admin migrada a bcrypt con éxito.')
   }
 
   httpServer.listen(PORT, () => {

@@ -17,19 +17,47 @@ function getBaseUrl() {
 const BASE = getBaseUrl()
 
 async function request(url, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...options.headers }
+
+  // Inyectar automáticamente el token de sesión JWT si existe en sessionStorage
+  if (typeof window !== 'undefined') {
+    const token = sessionStorage.getItem('auth_token')
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+  }
+
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
+    headers,
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Error del servidor')
+
+  const data = await res.json().catch(() => ({}))
+
+  if (!res.ok) {
+    // Si el token expiró o fue alterado, limpiar la sesión local
+    if (res.status === 401 && (data.code === 'TOKEN_EXPIRED' || data.code === 'TOKEN_INVALID')) {
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('auth_token')
+        sessionStorage.removeItem('user_data')
+        sessionStorage.removeItem('admin_auth')
+        window.dispatchEvent(new CustomEvent('auth-expired', { detail: data.error }))
+      }
+    }
+    throw new Error(data.error || 'Error del servidor')
+  }
+
   return data
 }
 
 export default {
   auth: {
     login(correo, password) {
-      return request('/auth/login', { method: 'POST', body: JSON.stringify({ correo, password }) })
+      const body = { correo }
+      if (password !== undefined && password !== null && password !== '') {
+        body.password = password
+      }
+      return request('/auth/login', { method: 'POST', body: JSON.stringify(body) })
     },
     getPerfil() {
       return request('/auth/perfil')
