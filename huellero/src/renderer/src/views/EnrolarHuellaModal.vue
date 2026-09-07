@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   claseActiva: { type: Object, default: null },
@@ -45,7 +45,20 @@ const seleccionado = computed(
   () => estudiantes.value.find((e) => e._id === seleccionadoId.value) || null
 )
 
+let offProgreso = null
+
 onMounted(async () => {
+  offProgreso = window.huellero.onEnrolarProgreso((p) => {
+    mensajeCaptura.value = p.mensaje || ''
+    if (p.fase === 'completado') {
+      estadoCaptura.value = 'ok'
+    } else if (p.fase === 'cancelado') {
+      estadoCaptura.value = 'idle'
+    } else {
+      estadoCaptura.value = 'capturando'
+    }
+  })
+
   const fichaLider = await window.huellero.getFichaLider()
   if (!fichaLider.ok) {
     errorInicial.value = fichaLider.error
@@ -65,10 +78,23 @@ onMounted(async () => {
   cargando.value = false
 })
 
+onUnmounted(() => {
+  if (offProgreso) offProgreso()
+})
+
 function seleccionar(id) {
   seleccionadoId.value = id
   estadoCaptura.value = 'idle'
   mensajeCaptura.value = ''
+}
+
+function cancelar() {
+  window.huellero.cancelarEnrolamiento()
+}
+
+function cerrar() {
+  window.huellero.cancelarEnrolamiento()
+  emit('close')
 }
 
 async function iniciarCaptura() {
@@ -86,6 +112,7 @@ async function iniciarCaptura() {
     estudianteId: seleccionado.value._id,
     fichaId: ficha.value._id,
     dedo: dedo.value,
+    nombre: `${seleccionado.value.nombres} ${seleccionado.value.apellidos}`.trim(),
   })
 
   if (res.ok) {
@@ -103,7 +130,7 @@ async function iniciarCaptura() {
     <div class="modal">
       <header>
         <h2>Registrar huella</h2>
-        <button class="ghost cerrar" @click="emit('close')">✕</button>
+        <button class="ghost cerrar" @click="cerrar">✕</button>
       </header>
 
       <div v-if="cargando" class="cuerpo centrado">
@@ -172,6 +199,10 @@ async function iniciarCaptura() {
               @click="iniciarCaptura"
             >
               {{ estadoCaptura === 'capturando' ? 'Capturando…' : 'Iniciar captura' }}
+            </button>
+
+            <button v-if="estadoCaptura === 'capturando'" class="ghost" @click="cancelar">
+              Cancelar
             </button>
 
             <p v-if="mensajeCaptura" class="mensaje" :class="estadoCaptura">

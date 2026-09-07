@@ -4,16 +4,32 @@ import * as ws from './ws-client.js'
 import { capturarHuella, inicializarCaptura } from './capture.js'
 import { syncPendientes } from './sync.js'
 import { identificarEstudiante } from '../verify.js'
+import * as fingerprint from '../fingerprint.js'
 
 let docente = null
+let avisoSesion = null
 let onEstadoChange = null
+let onEnrolarProgreso = null
+let enrolamientoCancelado = false
 
 export function setOnEstadoChange(cb) {
   onEstadoChange = cb
 }
 
+export function setOnEnrolarProgreso(cb) {
+  onEnrolarProgreso = cb
+}
+
+export function cancelarEnrolamiento() {
+  enrolamientoCancelado = true
+}
+
 function notificarEstado() {
   if (onEstadoChange) onEstadoChange()
+}
+
+function notificarProgresoEnrolamiento(payload) {
+  if (onEnrolarProgreso) onEnrolarProgreso(payload)
 }
 
 export async function init() {
@@ -41,6 +57,7 @@ export function getStatus() {
           rolDetallado: docente.rolDetallado,
         }
       : null,
+    avisoSesion,
   }
 }
 
@@ -114,6 +131,7 @@ export async function loginDocente(correo, password) {
     rol: usuario.rol,
     esLider: !!usuario.esLider,
     rolDetallado: usuario.rolDetallado || 'Instructor',
+    token: data.token || null,
   }
 
   return { ok: true, docente: { correo: docente.correo, nombre: docente.nombre } }
@@ -128,9 +146,23 @@ export async function getFichaLider() {
 
   let res
   try {
-    res = await fetch(`${backendUrl}/api/fichas/mis-fichas/${docente.id}`, { signal: AbortSignal.timeout(10000) })
+    res = await fetch(`${backendUrl}/api/fichas/mis-fichas/${docente.id}`, {
+      headers: docente.token ? { Authorization: `Bearer ${docente.token}` } : {},
+      signal: AbortSignal.timeout(10000),
+    })
   } catch {
     return { ok: false, error: 'Sin conexión: no se puede obtener la ficha' }
+  }
+
+  if (res.status === 401) {
+    docente = null
+    avisoSesion = 'Tu sesión expiró. Vuelve a iniciar sesión.'
+    notificarEstado()
+    setTimeout(() => {
+      avisoSesion = null
+      notificarEstado()
+    }, 6000)
+    return { ok: false, error: 'Tu sesión expiró. Vuelve a iniciar sesión.' }
   }
 
   if (!res.ok) {
@@ -197,7 +229,7 @@ export async function guardarTemplate({ estudianteId, fichaId, dedo, template })
   return { ok: true, ...data }
 }
 
-export async function enrolarEstudiante({ estudianteId, fichaId, dedo }) {
+export async function enrolarEstudiante({ estudianteId, fichaId, dedo, nombre }) {
   if (!estudianteId || !fichaId) {
     return { ok: false, error: 'Selecciona un estudiante' }
   }
@@ -207,14 +239,91 @@ export async function enrolarEstudiante({ estudianteId, fichaId, dedo }) {
     return { ok: false, error: 'Finaliza la clase activa en este dispositivo antes de enrolar' }
   }
 
-  try {
-    await capturarHuella()
-  } catch (err) {
-    return { ok: false, error: err.message }
+  if (!fingerprint.isAvailable()) {
+    return { ok: false, error: 'Motor biométrico no disponible (dpfj.dll)' }
   }
 
-  // TODO Fase 5: transformar la imagen en template con el motor local (fingerprint.js) y llamar guardarTemplate.
-  return { ok: false, error: 'Enrolamiento aún no implementado: falta convertir la imagen en template' }
+  const session = fingerprint.startSession(estudianteId, nombre || '', '', dedo || '')
+  const sessionId = session.sessionId
+  const total = session.capturesNeeded || 4
+  const MAX_FALLOS_CONSECUTIVOS = 3
+
+  enrolamientoCancelado = false
+
+  try {
+    let actual = 0
+    let fallosConsecutivos = 0
+
+    while (true) {
+      if (enrolamientoCancelado) {
+        fingerprint.cancelSession(sessionId)
+        notificarProgresoEnrolamiento({ fase: 'cancelado', actual, total, mensaje: 'Enrolamiento cancelado' })
+        return { ok: false, error: 'Enrolamiento cancelado' }
+      }
+
+      notificarProgresoEnrolamiento({
+        fase: 'esperando_captura',
+        actual,
+        total,
+        mensaje: `Coloque el dedo en el lector (${actual + 1}/${total})`,
+      })
+
+      let captura
+      try {
+        captura = await capturarHuella()
+      } catch (err) {
+        fallosConsecutivos++
+        const motivo = err.message || 'No se pudo capturar la huella'
+        notificarProgresoEnrolamiento({ fase: 'captura_fallida', actual, total, mensaje: `${motivo} — reintentando` })
+
+        if (fallosConsecutivos >= MAX_FALLOS_CONSECUTIVOS) {
+          fingerprint.cancelSession(sessionId)
+          notificarProgresoEnrolamiento({ fase: 'cancelado', actual, total, mensaje: 'Enrolamiento cancelado por fallos consecutivos' })
+          return { ok: false, error: `No se pudo capturar una huella válida: ${motivo}` }
+        }
+        continue // reintenta la MISMA captura (no avanza el contador)
+      }
+
+      const res = fingerprint.addCapture(sessionId, captura.imagen, captura.dpi)
+      if (res.error) {
+        fingerprint.cancelSession(sessionId)
+        notificarProgresoEnrolamiento({ fase: 'cancelado', actual, total, mensaje: res.error })
+        return { ok: false, error: res.error }
+      }
+
+      fallosConsecutivos = 0
+      actual = res.captures
+
+      if (res.ready) {
+        notificarProgresoEnrolamiento({ fase: 'captura_aceptada', actual, total, mensaje: 'Generando template…' })
+        break
+      }
+
+      notificarProgresoEnrolamiento({
+        fase: 'captura_aceptada',
+        actual,
+        total,
+        mensaje: `Captura ${actual} aceptada. Retire el dedo y vuelva a colocarlo.`,
+      })
+    }
+
+    const completo = fingerprint.completeEnrollment(sessionId)
+    if (completo.error) {
+      notificarProgresoEnrolamiento({ fase: 'cancelado', actual, total, mensaje: completo.error })
+      return { ok: false, error: completo.error }
+    }
+
+    notificarProgresoEnrolamiento({ fase: 'guardando', actual, total, mensaje: 'Guardando huella…' })
+    const guardado = await guardarTemplate({ estudianteId, fichaId, dedo, template: completo.template })
+
+    if (guardado.ok) {
+      notificarProgresoEnrolamiento({ fase: 'completado', actual, total, mensaje: 'Huella registrada correctamente' })
+    }
+    return guardado
+  } catch (err) {
+    fingerprint.cancelSession(sessionId)
+    return { ok: false, error: err.message }
+  }
 }
 
 export function logoutDocente() {

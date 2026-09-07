@@ -48,8 +48,14 @@ ipcMain.handle('huellero:logout', () => engine.logoutDocente())
 ipcMain.handle('huellero:getFichaLider', () => engine.getFichaLider())
 ipcMain.handle('huellero:getEstudiantesFicha', (_e, fichaId) => engine.getEstudiantesFicha(fichaId))
 ipcMain.handle('huellero:enrolar', (_e, payload) => engine.enrolarEstudiante(payload))
+ipcMain.handle('huellero:cancelarEnrolar', () => engine.cancelarEnrolamiento())
 
 engine.setOnEstadoChange(broadcastStatus)
+engine.setOnEnrolarProgreso((progreso) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('huellero:enrolar-progreso', progreso)
+  }
+})
 
 app.whenReady().then(async () => {
   createWindow()

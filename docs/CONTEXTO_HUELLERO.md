@@ -223,7 +223,7 @@ Huellero → Backend:
 4. El enrolamiento ocurre **físicamente en el PC que tiene el lector**.
 5. El backend almacena finalmente el template en MongoDB.
 
-`[PENDIENTE]` — Implementar el bucle de captura de múltiples muestras en el huellero para el enrolamiento (la captura de una sola imagen ya está implementada en `capture.js` desde la Fase 5; falta el loop de `addCapture` para componer el template de enrolamiento).
+`[IMPLEMENTADO]` (2026-09-07) — Bucle de captura de múltiples muestras para enrolamiento implementado en `engine.enrolarEstudiante()` (loop `capturarHuella()` + `addCapture()` hasta que el motor confirma `ready:true`).
 
 # Huellas y templates
 
@@ -320,11 +320,15 @@ Captura real funcionando contra el lector físico **U.are.U 4500** mediante `hue
 - Sin conexión devuelve error ("Sin conexión: no se puede validar el acceso docente").
 - En el kiosko se abre con `Ctrl+Shift+L` o con el botón ⚙.
 
-## Enrolamiento (modal docente) `[PARCIAL]`
+## Enrolamiento (modal docente) `[IMPLEMENTADO]`
 
 - Solo visible si `esLider === true` (`DocenteView.vue`).
 - `engine.getFichaLider()` → `GET /api/fichas/mis-fichas/:instructorId` (filtra `esLider`), y `engine.getEstudiantesFicha(fichaId)` → `GET /api/estudiantes?fichaId=`.
-- `engine.enrolarEstudiante()` rechaza si hay clase activa en el dispositivo (estado local de `store.js`), luego captura (Fase 5, ya real) y guardaría vía `POST /api/enrolamiento/guardar` (chequeo de duplicados en backend). **Falta** convertir la imagen capturada en template con el motor local (loop de `addCapture`), por lo que el guardado aún no se concreta.
+- `engine.enrolarEstudiante()` rechaza si hay clase activa en el dispositivo (estado local de `store.js`), luego ejecuta el loop de enrolamiento: `startSession()` → `capturarHuella()` + `addCapture()` repetido hasta que el motor confirma `ready:true` → `completeEnrollment()` (template) → `POST /api/enrolamiento/guardar` (chequeo de duplicados en backend).
+
+> **[IMPLEMENTADO] (2026-09-07) — Loop de enrolamiento verificado de punta a punta con hardware real:** login docente (con fix de autenticación JWT en `getFichaLider`) → obtención de ficha del líder → selección de estudiante → múltiples capturas reales (`dpfpdd_capture`) hasta que el motor confirma `ready:true` → generación del template (`completeEnrollment`) → guardado exitoso vía `POST /api/enrolamiento/guardar`. Confirmado en MongoDB: `huellaEnrolada:true`, `huellaTemplate` poblado, `dedoEnrolado` y `fechaEnrolamiento` correctos.
+
+> **Bug de autenticación corregido (2026-09-07):** `getFichaLider()` no enviaba el header `Authorization` (el token del login se descartaba en `loginDocente()`), por lo que `GET /api/fichas/mis-fichas/:id` (protegido con `autenticarJWT`) respondía 401 y el modal mostraba "No se pudo obtener la ficha del líder". Corregido: `loginDocente()` ahora guarda el `token`, `getFichaLider()` lo envía como `Bearer`, y un 401 dispara auto-logout + aviso temporal en el kiosko (`KioskoView.vue`), sin afectar el logout manual.
 
 ## Identidad del dispositivo (Fase 3) `[IMPLEMENTADO]`
 
@@ -353,7 +357,7 @@ Captura real funcionando contra el lector físico **U.are.U 4500** mediante `hue
 - `sync.js` (Fase 10): **sincronización no implementada**.
 - `npm audit` (huellero/): **13 vulnerabilidades** — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). `[PENDIENTE]` — sin prisa pero sin olvidarlo; la corrección requiere `npm audit fix --force` con cambios breaking (electron@44, electron-builder@26).
 
-Consecuencia: la captura ya funciona, pero `capturarYVerificar()` aún no identifica a nadie porque `getPlantillasFicha()` devuelve `[]` (plantillas todavía sin cachear), y el enrolamiento sigue devolviendo error porque falta convertir la imagen en template (loop de `addCapture`).
+Consecuencia: la captura y el enrolamiento ya funcionan; `capturarYVerificar()` aún no identifica a nadie porque `getPlantillasFicha()` devuelve `[]` (plantillas todavía sin cachear).
 
 # Estructura actual de huellero
 
@@ -540,3 +544,55 @@ Cualquier IA (o persona) que continúe trabajando en este proyecto debe:
 10. No continuar automáticamente a una fase posterior si la fase actual falla.
 11. No inventar endpoints, modelos o estructuras que no hayan sido confirmados.
 12. Mantener este documento actualizado cuando cambien decisiones importantes.
+
+# ROADMAP — Próximos pasos y pendientes
+
+> Consolidado de **todo lo que falta** para completar la app del huellero, en un solo lugar.
+> Estados verificados contra el código el **2026-09-07** (no asumidos).
+
+## 1. Bloqueante crítico: el registro de asistencia real `[PENDIENTE]`
+
+El enrolamiento ya funciona de punta a punta, pero **tomar asistencia** (estudiante coloca el dedo durante una clase activa → se identifica → se registra la asistencia) sigue incompleto. Estado verificado:
+
+- `store.getPlantillasFicha()` (`huellero/src/main/store.js:72`) **siempre devuelve `[]`**: el objeto `plantillas` se carga vacío en `init()` y **no existe ningún setter** que lo llene.
+- **No existe** `GET /api/fichas/:id/plantillas` en `backend/routes/fichas.js` ni en `backend/controllers/fichaController.js`.
+- `engine.capturarYVerificar()` (`huellero/src/main/engine.js:47`) captura e identifica, pero con plantillas vacías `verifyFingerprint` devuelve "No hay estudiantes enrolados para comparar"; además **nunca persiste** la asistencia (el kiosko muestra "Asistencia registrada" solo en la UI).
+- `POST /api/asistencias` **sí existe** (`backend/routes/asistencias.js:10`, `createAsistencia` con `findOneAndUpdate`/upsert) — falta que el huellero lo invoque.
+
+Para cerrar el ciclo falta:
+1. `GET /api/fichas/:id/plantillas` en backend (devolver los `huellaTemplate` de los estudiantes enrolados de esa ficha).
+2. Descargar y cachear plantillas en el huellero (nuevo setter en `store.js`, p. ej. `guardarPlantillasFicha()`), disparado al recibir `ACTIVATE` (y re-descarga al reconectar/HELLO).
+3. Registrar la asistencia tras identificar: online vía `POST /api/asistencias` (con `metodo:'HUELLA'`) o, sin conexión, `store.guardarPendiente()` con UUID para sincronizar después.
+
+## 2. Robustez del ciclo de clases activas `[PARCIAL]`
+
+- **DEACTIVATE / `POST /api/clases/finalizar`**: no implementado. Solo existe `ACTIVATE` (`emitirActivacion` en `backend/services/socketService.js:172`); `huellero/src/main/ws-client.js` solo escucha `ACTIVATE`; `backend/routes/clases.js` solo tiene `/activar`. `[PENDIENTE]`
+- **Invariante "una clase activa por dispositivo"**: `claseController.activar` (`backend/controllers/claseController.js:11-19`) hace `findOne` + `save`/`create` **no atómico**; el modelo `Clase` (`backend/models/Clase.js`) **no tiene índice único** sobre `{deviceId, estado:'Activa'}` → ventana de carrera real. Resolver con `findOneAndUpdate` + upsert atómico o índice parcial único. `[PENDIENTE]`
+- **Acks `ACTIVATED`/`DEACTIVATED`**: diseñados, nunca implementados. `[PENDIENTE]`
+- **`GET /api/clases/estado`** (restaurar estado al recargar el dashboard): no existe. `[PENDIENTE]`
+
+## 3. Sincronización offline/online (Fase 10) `[PENDIENTE]`
+
+- `huellero/src/main/sync.js` sigue siendo stub.
+- No existe cron/intervalo de las 12:00 AM (ni en `sync.js` ni en `backend/index.js`).
+- Mecanismo de backoff para reintentos: **sin decidir** (fijo vs exponencial).
+- `POST /api/asistencias/sync` (idempotente por UUID): no existe en `backend/routes/asistencias.js`.
+
+## 4. Administración: asociación dispositivo↔ficha `[PENDIENTE]`
+
+- No existe la sección "Dispositivos/Huelleros" en el dashboard (`frontend/src/App.vue`).
+- Por eso `POST /api/clases/activar` sigue recibiendo `deviceId` manualmente en el body (`backend/controllers/claseController.js:5`) en vez de resolverlo desde `fichaId`.
+- Faltan `GET /api/dispositivos` y `PUT /api/dispositivos/:id/fichas` (`backend/routes/dispositivos.js` solo tiene `/registrar`).
+
+## 5. Calidad y mantenimiento (sin urgencia, no olvidar)
+
+- **npm audit (`huellero/`)**: 13 vulnerabilidades — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). Requiere `npm audit fix --force` con breaking (electron@44, electron-builder@26). `[PENDIENTE]`
+- **Migrar `dpfpdd_capture` (síncrona) → `dpfpdd_capture_async`**: opcional. El bloqueo de 10s se confirmó tolerable (no rompe el WS), pero sigue siendo mejora de UX. `[PENDIENTE]`
+- **Contraseñas en texto plano de Admin/Instructor**: **mayormente resuelto** (verificado 2026-09-07). El Admin por defecto se crea con bcrypt y hay auto-migración texto plano→bcrypt en `backend/index.js:81-97`; los controllers de Instructor hashean. Matiz residual: el modelo `Instructor` (`backend/models/Instructor.js:11`) declara `password: { default: 'sena2026' }` en claro, latente solo si se usa el modelo fuera de los controllers. `[RESUELTO con matiz]`
+- **Campo `metodo: 'HUELLA' | 'MANUAL'`** en `Asistencia`: no existe (`backend/models/Asistencia.js`). Requerido para auditoría y para el registro biométrico (categoría 1). `[PENDIENTE]`
+- **Autenticación del WebSocket del dashboard**: el REST del dashboard **sí usa JWT** (`frontend/src/services/api.js` inyecta `auth_token` desde `sessionStorage`), pero el **WebSocket del dashboard** (`frontend/src/services/socket.js`) se conecta **sin autenticación** (a diferencia del HELLO autenticado del huellero). `[PENDIENTE]`
+- **Flujo Web SDK del navegador** (si llega a reactivarse): verificar su propio mismatch de DPI (no investigado). `[PENDIENTE]`
+
+## 6. Empaquetado final `[PENDIENTE]`
+
+- Fase 12 (`.exe`): no intentar hasta que todo lo anterior funcione como app Node/Electron independiente.

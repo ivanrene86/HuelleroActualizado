@@ -534,6 +534,7 @@ const __dirname$2 = path.dirname(fileURLToPath(import.meta.url));
 const dllFolder = path.resolve(__dirname$2, "../dll");
 process.env.PATH = `${dllFolder};${process.env.PATH}`;
 const DPFJ_SUCCESS = 0;
+const DPFJ_E_MORE_DATA = 96075789;
 const DPFJ_FMD_ANSI_378_2004 = 1769473;
 const DPFJ_POSITION_UNKNOWN = 0;
 let MAX_FMD_SIZE = 26 + 4 + 255 * 6 + 2;
@@ -563,11 +564,12 @@ for (const p of searchPaths) {
 if (!dpfj) {
   console.error("[fingerprint] ❌ No se pudo cargar dpfj.dll de ninguna ubicación. Asegúrese de tener instalado el driver/SDK de DigitalPersona y Visual C++ Redistributable x64.");
 }
+let dpfj_start_enrollment, dpfj_add_to_enrollment, dpfj_create_enrollment_fmd;
 let dpfj_finish_enrollment, dpfj_create_fmd_from_raw, dpfj_compare;
 if (dpfj) {
-  dpfj.func("dpfj_start_enrollment", "int", ["int"]);
-  dpfj.func("dpfj_add_to_enrollment", "int", ["int", "void*", "uint32", "uint32"]);
-  dpfj.func("dpfj_create_enrollment_fmd", "int", ["void*", "void*"]);
+  dpfj_start_enrollment = dpfj.func("dpfj_start_enrollment", "int", ["int"]);
+  dpfj_add_to_enrollment = dpfj.func("dpfj_add_to_enrollment", "int", ["int", "void*", "uint32", "uint32"]);
+  dpfj_create_enrollment_fmd = dpfj.func("dpfj_create_enrollment_fmd", "int", ["void*", "void*"]);
   dpfj_finish_enrollment = dpfj.func("dpfj_finish_enrollment", "int", []);
   dpfj_create_fmd_from_raw = dpfj.func("dpfj_create_fmd_from_raw", "int", [
     "void*",
@@ -597,8 +599,12 @@ if (dpfj) {
   } catch (_) {
   }
 }
+const sessions = {};
 function bufFromBase64(b64) {
   return Buffer.from(b64, "base64");
+}
+function bufToBase64(buf) {
+  return buf.toString("base64");
 }
 function makeSizeBuf(value) {
   const b = Buffer.alloc(4);
@@ -686,6 +692,117 @@ function compareFmds(fmd1Bytes, fmd2Bytes) {
   }
   return { ok: false, score: null };
 }
+function isAvailable() {
+  return !!(dpfj && dpfj_create_fmd_from_raw && dpfj_compare);
+}
+function startSession(studentId, name, documento, dedo) {
+  Object.keys(sessions).forEach((k) => {
+    sessions[k].active = false;
+  });
+  const sessionId = "fp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  sessions[sessionId] = {
+    studentId: String(studentId),
+    name: name.trim(),
+    documento: "",
+    dedo: dedo || "",
+    captures: 0,
+    active: true,
+    enrollmentStarted: false,
+    ready: false
+  };
+  return { sessionId, capturesNeeded: 4 };
+}
+function addCapture(sessionId, imageBase64, dpi = 500) {
+  const session = sessions[sessionId];
+  if (!session || !session.active) {
+    return { error: "Sesión de enrollment no encontrada o ya finalizada" };
+  }
+  const fmdBuf = pngToFmd(imageBase64, dpi);
+  if (!fmdBuf) {
+    return { error: "No se pudo extraer características de la huella. Intenta de nuevo." };
+  }
+  console.log(`[fingerprint] Captura convertida a FMD: ${fmdBuf.length} bytes`);
+  let result;
+  if (!session.enrollmentStarted) {
+    let startResult = dpfj_start_enrollment(DPFJ_FMD_ANSI_378_2004);
+    if (startResult === 96076077) {
+      dpfj_finish_enrollment();
+      startResult = dpfj_start_enrollment(DPFJ_FMD_ANSI_378_2004);
+    }
+    if (startResult !== DPFJ_SUCCESS) {
+      session.active = false;
+      return { error: dpfjError(startResult) };
+    }
+    session.enrollmentStarted = true;
+  }
+  result = dpfj_add_to_enrollment(DPFJ_FMD_ANSI_378_2004, fmdBuf, fmdBuf.length, 0);
+  if (result === DPFJ_E_MORE_DATA) {
+    session.captures++;
+    return {
+      ok: true,
+      ready: false,
+      captures: session.captures,
+      message: `Captura ${session.captures} aceptada. Sigue colocando el dedo...`
+    };
+  }
+  if (result === DPFJ_SUCCESS) {
+    session.captures++;
+    session.ready = true;
+    return {
+      ok: true,
+      ready: true,
+      captures: session.captures,
+      message: "Suficientes capturas. Completa el registro."
+    };
+  }
+  return { error: dpfjError(result) };
+}
+function completeEnrollment(sessionId) {
+  const session = sessions[sessionId];
+  if (!session || !session.active) {
+    return { error: "Sesión no encontrada" };
+  }
+  let fmdBuf = Buffer.alloc(MAX_FMD_SIZE);
+  let sizeBuf = makeSizeBuf(MAX_FMD_SIZE);
+  let result = dpfj_create_enrollment_fmd(fmdBuf, sizeBuf);
+  if (result === DPFJ_E_MORE_DATA) {
+    const needed = readSizeBuf(sizeBuf);
+    MAX_FMD_SIZE = needed;
+    fmdBuf = Buffer.alloc(MAX_FMD_SIZE);
+    sizeBuf = makeSizeBuf(MAX_FMD_SIZE);
+    result = dpfj_create_enrollment_fmd(fmdBuf, sizeBuf);
+  }
+  if (result !== DPFJ_SUCCESS) {
+    dpfj_finish_enrollment();
+    session.active = false;
+    return { error: dpfjError(result) };
+  }
+  const actualSize = readSizeBuf(sizeBuf);
+  const finalFmd = fmdBuf.subarray(0, actualSize);
+  const template = bufToBase64(finalFmd);
+  dpfj_finish_enrollment();
+  session.active = false;
+  return {
+    ok: true,
+    template,
+    studentId: session.studentId,
+    name: session.name,
+    dedo: session.dedo
+  };
+}
+function cancelSession(sessionId) {
+  const session = sessions[sessionId];
+  if (session) {
+    session.active = false;
+  }
+  if (dpfj) {
+    try {
+      dpfj_finish_enrollment();
+    } catch (_) {
+    }
+  }
+  return { ok: true, message: "Enrollment cancelado." };
+}
 function verifyFingerprint(imageBase64, enrolledStudents, dpi = 500) {
   const probeFmd = pngToFmd(imageBase64, dpi);
   if (!probeFmd) {
@@ -738,12 +855,24 @@ function identificarEstudiante(imageBase64, estudiantesLocales, dpi = 500) {
   return verifyFingerprint(imageBase64, registrosMotor, dpi);
 }
 let docente = null;
+let avisoSesion = null;
 let onEstadoChange = null;
+let onEnrolarProgreso = null;
+let enrolamientoCancelado = false;
 function setOnEstadoChange(cb) {
   onEstadoChange = cb;
 }
+function setOnEnrolarProgreso(cb) {
+  onEnrolarProgreso = cb;
+}
+function cancelarEnrolamiento() {
+  enrolamientoCancelado = true;
+}
 function notificarEstado() {
   if (onEstadoChange) onEstadoChange();
+}
+function notificarProgresoEnrolamiento(payload) {
+  if (onEnrolarProgreso) onEnrolarProgreso(payload);
 }
 async function init() {
   await init$1();
@@ -766,7 +895,8 @@ function getStatus() {
       nombre: docente.nombre,
       esLider: docente.esLider,
       rolDetallado: docente.rolDetallado
-    } : null
+    } : null,
+    avisoSesion
   };
 }
 async function capturarYVerificar() {
@@ -827,7 +957,8 @@ async function loginDocente(correo, password) {
     nombre: usuario.nombre,
     rol: usuario.rol,
     esLider: !!usuario.esLider,
-    rolDetallado: usuario.rolDetallado || "Instructor"
+    rolDetallado: usuario.rolDetallado || "Instructor",
+    token: data.token || null
   };
   return { ok: true, docente: { correo: docente.correo, nombre: docente.nombre } };
 }
@@ -838,9 +969,22 @@ async function getFichaLider() {
   const { backendUrl } = getConfig();
   let res;
   try {
-    res = await fetch(`${backendUrl}/api/fichas/mis-fichas/${docente.id}`, { signal: AbortSignal.timeout(1e4) });
+    res = await fetch(`${backendUrl}/api/fichas/mis-fichas/${docente.id}`, {
+      headers: docente.token ? { Authorization: `Bearer ${docente.token}` } : {},
+      signal: AbortSignal.timeout(1e4)
+    });
   } catch {
     return { ok: false, error: "Sin conexión: no se puede obtener la ficha" };
+  }
+  if (res.status === 401) {
+    docente = null;
+    avisoSesion = "Tu sesión expiró. Vuelve a iniciar sesión.";
+    notificarEstado();
+    setTimeout(() => {
+      avisoSesion = null;
+      notificarEstado();
+    }, 6e3);
+    return { ok: false, error: "Tu sesión expiró. Vuelve a iniciar sesión." };
   }
   if (!res.ok) {
     return { ok: false, error: "No se pudo obtener la ficha del líder" };
@@ -870,7 +1014,29 @@ async function getEstudiantesFicha(fichaId) {
   const estudiantes = await res.json().catch(() => null);
   return { ok: true, estudiantes: Array.isArray(estudiantes) ? estudiantes : [] };
 }
-async function enrolarEstudiante({ estudianteId, fichaId, dedo }) {
+async function guardarTemplate({ estudianteId, fichaId, dedo, template }) {
+  if (!estudianteId || !fichaId || !template) {
+    return { ok: false, error: "Faltan datos para guardar la huella" };
+  }
+  const { backendUrl } = getConfig();
+  let res;
+  try {
+    res = await fetch(`${backendUrl}/api/enrolamiento/guardar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ estudianteId, fichaId, dedo, template }),
+      signal: AbortSignal.timeout(15e3)
+    });
+  } catch {
+    return { ok: false, error: "Sin conexión: no se pudo guardar la huella" };
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    return { ok: false, error: data?.error || "No se pudo guardar la huella" };
+  }
+  return { ok: true, ...data };
+}
+async function enrolarEstudiante({ estudianteId, fichaId, dedo, nombre }) {
   if (!estudianteId || !fichaId) {
     return { ok: false, error: "Selecciona un estudiante" };
   }
@@ -878,12 +1044,77 @@ async function enrolarEstudiante({ estudianteId, fichaId, dedo }) {
   if (clase) {
     return { ok: false, error: "Finaliza la clase activa en este dispositivo antes de enrolar" };
   }
+  if (!isAvailable()) {
+    return { ok: false, error: "Motor biométrico no disponible (dpfj.dll)" };
+  }
+  const session = startSession(estudianteId, nombre || "", "", dedo || "");
+  const sessionId = session.sessionId;
+  const total = session.capturesNeeded;
+  const MAX_FALLOS_CONSECUTIVOS = 3;
+  enrolamientoCancelado = false;
   try {
-    await capturarHuella();
+    let actual = 0;
+    let fallosConsecutivos = 0;
+    while (true) {
+      if (enrolamientoCancelado) {
+        cancelSession(sessionId);
+        notificarProgresoEnrolamiento({ fase: "cancelado", actual, total, mensaje: "Enrolamiento cancelado" });
+        return { ok: false, error: "Enrolamiento cancelado" };
+      }
+      notificarProgresoEnrolamiento({
+        fase: "esperando_captura",
+        actual,
+        total,
+        mensaje: `Coloque el dedo en el lector (${actual + 1}/${total})`
+      });
+      let captura;
+      try {
+        captura = await capturarHuella();
+      } catch (err) {
+        fallosConsecutivos++;
+        const motivo = err.message || "No se pudo capturar la huella";
+        notificarProgresoEnrolamiento({ fase: "captura_fallida", actual, total, mensaje: `${motivo} — reintentando` });
+        if (fallosConsecutivos >= MAX_FALLOS_CONSECUTIVOS) {
+          cancelSession(sessionId);
+          notificarProgresoEnrolamiento({ fase: "cancelado", actual, total, mensaje: "Enrolamiento cancelado por fallos consecutivos" });
+          return { ok: false, error: `No se pudo capturar una huella válida: ${motivo}` };
+        }
+        continue;
+      }
+      const res = addCapture(sessionId, captura.imagen, captura.dpi);
+      if (res.error) {
+        cancelSession(sessionId);
+        notificarProgresoEnrolamiento({ fase: "cancelado", actual, total, mensaje: res.error });
+        return { ok: false, error: res.error };
+      }
+      fallosConsecutivos = 0;
+      actual = res.captures;
+      if (res.ready) {
+        notificarProgresoEnrolamiento({ fase: "captura_aceptada", actual, total, mensaje: "Generando template…" });
+        break;
+      }
+      notificarProgresoEnrolamiento({
+        fase: "captura_aceptada",
+        actual,
+        total,
+        mensaje: `Captura ${actual} aceptada. Retire el dedo y vuelva a colocarlo.`
+      });
+    }
+    const completo = completeEnrollment(sessionId);
+    if (completo.error) {
+      notificarProgresoEnrolamiento({ fase: "cancelado", actual, total, mensaje: completo.error });
+      return { ok: false, error: completo.error };
+    }
+    notificarProgresoEnrolamiento({ fase: "guardando", actual, total, mensaje: "Guardando huella…" });
+    const guardado = await guardarTemplate({ estudianteId, fichaId, dedo, template: completo.template });
+    if (guardado.ok) {
+      notificarProgresoEnrolamiento({ fase: "completado", actual, total, mensaje: "Huella registrada correctamente" });
+    }
+    return guardado;
   } catch (err) {
+    cancelSession(sessionId);
     return { ok: false, error: err.message };
   }
-  return { ok: false, error: "Enrolamiento aún no implementado: falta convertir la imagen en template" };
 }
 function logoutDocente() {
   docente = null;
@@ -927,7 +1158,13 @@ ipcMain.handle("huellero:logout", () => logoutDocente());
 ipcMain.handle("huellero:getFichaLider", () => getFichaLider());
 ipcMain.handle("huellero:getEstudiantesFicha", (_e, fichaId) => getEstudiantesFicha(fichaId));
 ipcMain.handle("huellero:enrolar", (_e, payload) => enrolarEstudiante(payload));
+ipcMain.handle("huellero:cancelarEnrolar", () => cancelarEnrolamiento());
 setOnEstadoChange(broadcastStatus);
+setOnEnrolarProgreso((progreso) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("huellero:enrolar-progreso", progreso);
+  }
+});
 app.whenReady().then(async () => {
   createWindow();
   broadcastStatus();

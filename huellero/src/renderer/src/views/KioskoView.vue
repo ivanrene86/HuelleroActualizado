@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   status: { type: Object, required: true },
@@ -14,6 +14,22 @@ const online = computed(() => props.status.online)
 const claseActiva = computed(() => props.status.claseActiva)
 const dispositivoRegistrado = computed(() => !!props.status.dispositivoRegistrado)
 
+const aviso = ref('')
+let avisoTimer = null
+
+watch(
+  () => props.status.avisoSesion,
+  (val) => {
+    if (!val) return
+    aviso.value = val
+    if (avisoTimer) clearTimeout(avisoTimer)
+    avisoTimer = setTimeout(() => {
+      aviso.value = ''
+    }, 5000)
+  },
+  { immediate: true }
+)
+
 function onKeydown(e) {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
     emit('abrir-login')
@@ -21,7 +37,10 @@ function onKeydown(e) {
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  if (avisoTimer) clearTimeout(avisoTimer)
+})
 
 async function leerHuella() {
   if (estado.value === 'leyendo') return
@@ -45,6 +64,8 @@ async function leerHuella() {
 
 <template>
   <div class="kiosko">
+    <div v-if="aviso" class="aviso-sesion">{{ aviso }}</div>
+
     <div class="status-bar">
       <span class="pill" :class="online ? 'ok' : 'off'">
         {{ online ? 'En línea' : 'Sin conexión' }}
@@ -195,5 +216,20 @@ h1 {
 
 .acceso:hover {
   opacity: 1;
+}
+
+.aviso-sesion {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--warn);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 60;
+  white-space: nowrap;
 }
 </style>
