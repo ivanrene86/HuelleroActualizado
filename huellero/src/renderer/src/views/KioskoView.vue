@@ -75,7 +75,7 @@ async function leerHuella() {
         {{ online ? 'En línea' : 'Sin conexión' }}
       </span>
       <span v-if="claseActiva" class="pill ok">
-        Clase activa · Ficha {{ claseActiva.fichaId }}
+        Clase activa · Ficha {{ claseActiva.codigoFicha || claseActiva.fichaId }}
       </span>
       <span v-if="!dispositivoRegistrado" class="pill info">
         Equipo no identificado. Reintentando conexión…

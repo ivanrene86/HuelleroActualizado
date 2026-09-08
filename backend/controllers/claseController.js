@@ -39,7 +39,12 @@ export async function activar(req, res) {
       { upsert: true, new: true }
     )
 
-    const enviado = emitirActivacion(deviceId, { type: 'ACTIVATE', fichaId: String(ficha._id), instructorId })
+    const enviado = emitirActivacion(deviceId, {
+      type: 'ACTIVATE',
+      fichaId: String(ficha._id),
+      instructorId,
+      codigoFicha: ficha.codigoFicha,
+    })
 
     res.json({ success: true, clase, enviadoPorWebSocket: enviado })
   } catch (err) {

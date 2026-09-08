@@ -60,6 +60,7 @@ export async function init() {
       fichaId: payload?.fichaId ?? null,
       instructorId: payload?.instructorId ?? null,
       claseId: payload?.claseId ?? null,
+      codigoFicha: payload?.codigoFicha ?? null,
       estado: 'Activa',
     })
     notificarEstado()

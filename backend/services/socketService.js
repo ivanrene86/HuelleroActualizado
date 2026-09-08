@@ -2,6 +2,7 @@ import { Server } from 'socket.io'
 import bcryptjs from 'bcryptjs'
 import Dispositivo from '../models/Dispositivo.js'
 import Clase from '../models/Clase.js'
+import Ficha from '../models/Ficha.js'
 
 let io = null
 const sesionesActivas = new Map() // fichaId -> { activa: true, iniciadoPor, fecha, jornada, fichaCodigo, nombrePrograma }
@@ -119,12 +120,20 @@ export function initSocket(httpServer) {
         try {
           const claseActiva = await Clase.findOne({ deviceId: String(deviceId), estado: 'Activa' })
           if (claseActiva) {
+            let codigoFicha = ''
+            try {
+              const ficha = await Ficha.findById(claseActiva.fichaId).select('codigoFicha')
+              codigoFicha = ficha?.codigoFicha || ''
+            } catch (_) {
+              // fichaId inválido o ficha borrada: se omite el código (no es crítico).
+            }
             socket.emit('ACTIVATE', {
               type: 'ACTIVATE',
               fichaId: String(claseActiva.fichaId),
               instructorId: String(claseActiva.instructorId),
+              codigoFicha,
             })
-            console.log(`[Socket.IO] Reenviando ACTIVATE pendiente a ${deviceId} tras reconexión (ficha ${claseActiva.fichaId})`)
+            console.log(`[Socket.IO] Reenviando ACTIVATE pendiente a ${deviceId} tras reconexión (ficha ${codigoFicha || claseActiva.fichaId})`)
           }
         } catch (err) {
           console.log(`[Socket.IO] Error reenviando ACTIVATE pendiente a ${deviceId}: ${err.message}`)
