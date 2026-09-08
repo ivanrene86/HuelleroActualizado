@@ -172,7 +172,7 @@ Backend → Huellero:
   DEACTIVATE { type: "DEACTIVATE", fichaId, instructorId }
 ```
 
-Nota: `POST /api/clases/activar` recibe hoy `{ deviceId, fichaId, instructorId }` porque la resolución `fichaId → deviceId` (asociación dispositivo↔ficha) aún no está implementada.
+`[IMPLEMENTADO]` (2026-09-08) — `POST /api/clases/activar` ya **no** recibe `deviceId` en el body: recibe `{ fichaId, instructorId }` y resuelve internamente el `deviceId` desde `Ficha.dispositivoId` (asociación dispositivo↔ficha implementada en el backend).
 
 # Enrolamiento
 
@@ -581,11 +581,10 @@ Falta para cerrar el ciclo:
 - `POST /api/asistencias/sync`: implementado (auth `deviceId`+`token`, idempotente por `uuid`, resultados por ítem). `[IMPLEMENTADO]`
 - **Fase 11 (pruebas de recuperación y duplicados)**: aún `[PENDIENTE]` — el código de sync e idempotencia está, pero no se han ejecutado pruebas formales de recuperación tras caída ni de duplicados masivos.
 
-## 4. Administración: asociación dispositivo↔ficha `[PENDIENTE]`
+## 4. Administración: asociación dispositivo↔ficha `[PARCIAL]`
 
-- No existe la sección "Dispositivos/Huelleros" en el dashboard (`frontend/src/App.vue`).
-- Por eso `POST /api/clases/activar` sigue recibiendo `deviceId` manualmente en el body (`backend/controllers/claseController.js:5`) en vez de resolverlo desde `fichaId`.
-- Faltan `GET /api/dispositivos` y `PUT /api/dispositivos/:id/fichas` (`backend/routes/dispositivos.js` solo tiene `/registrar`).
+- **Backend `[IMPLEMENTADO]` (2026-09-08)**: `Ficha.dispositivoId` (`Ficha.js`), `GET /api/dispositivos` y `PUT /api/dispositivos/:id/fichas` (`dispositivoController.js` + `routes/dispositivos.js`, rol Admin). `POST /api/clases/activar` ya resuelve `deviceId` desde `fichaId` (ya no lo recibe en el body).
+- **UI `[PENDIENTE]`**: no existe la sección "Dispositivos/Huelleros" en el dashboard (`frontend/src/App.vue`); por ahora la asociación se hace vía API (Postman) o a futuro desde la UI de Admin.
 
 ## 5. Calidad y mantenimiento (sin urgencia, no olvidar)
 

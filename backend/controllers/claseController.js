@@ -1,13 +1,32 @@
+import mongoose from 'mongoose'
 import Clase from '../models/Clase.js'
+import Ficha from '../models/Ficha.js'
 import { emitirActivacion, emitirDesactivacion } from '../services/socketService.js'
 
 export async function activar(req, res) {
-  const { deviceId, fichaId, instructorId } = req.body
-  if (!deviceId || !fichaId || !instructorId) {
-    return res.status(400).json({ success: false, error: 'deviceId, fichaId e instructorId son requeridos' })
+  const { fichaId, instructorId } = req.body
+  if (!fichaId || !instructorId) {
+    return res.status(400).json({ success: false, error: 'fichaId e instructorId son requeridos' })
   }
 
   try {
+    // Resuelve el deviceId desde la asociación ficha→dispositivo (Ficha.dispositivoId).
+    // Ya no se recibe deviceId en el body (asociación dispositivo↔ficha implementada).
+    if (!mongoose.Types.ObjectId.isValid(String(fichaId))) {
+      return res.status(400).json({ success: false, error: 'fichaId inválido' })
+    }
+    const ficha = await Ficha.findById(fichaId)
+    if (!ficha) {
+      return res.status(404).json({ success: false, error: 'Ficha no encontrada' })
+    }
+    if (!ficha.dispositivoId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Esta ficha no tiene un dispositivo asociado. Pide al administrador que la asigne desde Dispositivos.',
+      })
+    }
+    const deviceId = String(ficha.dispositivoId)
+
     // Operación atómica: upsert sobre la clase Activa de ese deviceId.
     // Evita la ventana de carrera de findOne + save/create (que podía crear
     // dos documentos Activa para el mismo dispositivo bajo concurrencia).
@@ -20,7 +39,7 @@ export async function activar(req, res) {
       { upsert: true, new: true }
     )
 
-    const enviado = emitirActivacion(deviceId, { type: 'ACTIVATE', fichaId, instructorId })
+    const enviado = emitirActivacion(deviceId, { type: 'ACTIVATE', fichaId: String(ficha._id), instructorId })
 
     res.json({ success: true, clase, enviadoPorWebSocket: enviado })
   } catch (err) {
