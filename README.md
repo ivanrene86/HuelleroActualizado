@@ -1,6 +1,6 @@
 # 🎓 Sistema de Asistencia Biométrica SENA (DigitalPersona U.are.U 4500)
 
-Sistema integral modular para el control, registro y reporte de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500, WebSockets en tiempo real y soporte para Modo Kiosco Autónomo de Aula. Incluye además una aplicación local de escritorio (Electron) para el huellero físico, con el ciclo completo funcionando contra hardware real: enrolamiento, verificación biométrica, registro de asistencia, sincronización offline/online y gestión de clases activas. Sigue en desarrollo — quedan pendientes la interfaz de administración de dispositivos y el empaquetado como `.exe`.
+Sistema integral modular para el control, registro y reporte de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500, WebSockets en tiempo real y soporte para Modo Kiosco Autónomo de Aula. Incluye además una aplicación local de escritorio (Electron) para el huellero físico, con el ciclo completo funcionando contra hardware real: enrolamiento, verificación biométrica, registro de asistencia, sincronización offline/online y gestión de clases activas — iniciar/finalizar clase desde el panel del instructor y asociación dispositivo↔ficha desde el dashboard de Admin. Sigue en desarrollo; lo pendiente está resumido en «Estado y próximos pasos».
 
 ---
 
@@ -49,8 +49,9 @@ HuelleroActualizado/
 
 Resumen de alto nivel de lo que queda pendiente (detalle completo y verificado en [`docs/CONTEXTO_HUELLERO.md`](./docs/CONTEXTO_HUELLERO.md)):
 
-- **Administración de dispositivos/huelleros**: el backend ya está (`GET /api/dispositivos`, `PUT /api/dispositivos/:id/fichas`); falta la sección en el dashboard del Admin.
-- **Acks del protocolo WebSocket** (`ACTIVATED`/`DEACTIVATED`) y `GET /api/clases/estado` para restaurar el estado de clase al recargar el dashboard.
+- **Estado visual del instructor (migración pendiente)**: `sesionRemotaActiva` y el feed en vivo siguen alimentados por el flujo viejo de socket (`estado_sesion`/`docente:nueva_marcacion`); el botón ya llama al endpoint real, pero el estado puede desincronizarse y no se restaura al recargar.
+- **Acks del protocolo WebSocket** (`ACTIVATED`/`DEACTIVATED`) y `GET /api/clases/estado` para restaurar el estado real de clase al recargar el dashboard.
+- **Índice único de asistencias** `(estudianteId, fichaId, fecha)` para cerrar la ventana de carrera de duplicados (requiere limpiar duplicados históricos primero).
 - **Empaquetado final del huellero como `.exe`** — pendiente hasta que todo funcione estable como app independiente.
 - **Vulnerabilidades de `npm audit`** en `huellero/` (1 crítica, 10 altas, 2 moderadas) en dependencias de build/empaquetado.
 - **Autenticación del WebSocket del dashboard** (hoy se conecta sin auth, a diferencia del `HELLO` autenticado del huellero).

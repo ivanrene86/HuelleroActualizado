@@ -142,9 +142,12 @@ PC Aula 03
 
 **Insight clave `[DECIDIDO]`:** el estado vive en la BD; el WebSocket solo *entrega* el mensaje. Si el dispositivo estaba offline al activar, la clase queda activa en BD y, cuando el dispositivo se reconecte, el backend le reenvía el comando pendiente (la reconexión no rompe nada).
 
-`[IMPLEMENTADO]` (parcial) — Modelo `Clase` (`deviceId`, `fichaId`, `instructorId`, `estado`, `iniciadaAt`, `finalizadaAt`) y endpoint `POST /api/clases/activar`, que crea/reactiva la clase y envía `ACTIVATE` por WebSocket al `deviceId` conectado.
+`[IMPLEMENTADO]` — Modelo `Clase` (`deviceId`, `fichaId`, `instructorId`, `estado`, `iniciadaAt`, `finalizadaAt`) y endpoint `POST /api/clases/activar`, que crea/reactiva la clase y envía `ACTIVATE` por WebSocket al `deviceId` conectado.
 `[IMPLEMENTADO]` — Reenvío del `ACTIVATE` pendiente al reconectar: al recibir un `HELLO` válido, si existe una clase `Activa` en BD para ese `deviceId`, el backend reenvía `ACTIVATE` al socket recién conectado.
-`[PENDIENTE]` — `finalizar` (`DEACTIVATE`) y las invariantes estrictas (una activa por instructor y por dispositivo).
+`[IMPLEMENTADO]` (2026-09-08) — `POST /api/clases/finalizar` (`DEACTIVATE`): busca la clase `Activa`, la pasa a `Finalizada` y emite `DEACTIVATE` al `deviceId` (resuelto desde el documento, no del body).
+`[IMPLEMENTADO]` (2026-09-08) — Invariante "una clase activa por dispositivo": `activar()` usa `findOneAndUpdate` atómico (upsert) + índice parcial único sobre `{deviceId, estado:'Activa'}`, con manejo del `E11000`.
+`[IMPLEMENTADO]` (2026-09-08) — Autenticación de `activar`/`finalizar`: `autenticarJWT` en ambas rutas + validación de identidad (`req.usuario.id` === `instructorId` del body) → 403 si no coincide.
+`[PENDIENTE]` — Acks `ACTIVATED`/`DEACTIVATED` y `GET /api/clases/estado` (restaurar estado al recargar el dashboard).
 
 # Activación remota
 
@@ -164,7 +167,7 @@ Instructor
 
 El PC del huellero **no necesita IP pública**: la conexión la inicia la aplicación local hacia el backend.
 
-**Mensajes definidos `[DECIDIDO]` (payloads), `[IMPLEMENTADO]` ACTIVATE (mínimo), `[PENDIENTE]` DEACTIVATE:**
+**Mensajes definidos `[DECIDIDO]` (payloads), `[IMPLEMENTADO]` ACTIVATE y DEACTIVATE:**
 
 ```text
 Backend → Huellero:
@@ -353,10 +356,10 @@ Captura real funcionando contra el lector físico **U.are.U 4500** mediante `hue
 
 ## Pendiente `[PENDIENTE]`
 
-- `ws-client.js` (Fase 6): HELLO autenticado, reconexión backoff 2s→60s; ya escucha `DEACTIVATE`, pero el backend **aún no envía** `DEACTIVATE` ni existen los acks. `[PARCIAL]`
+- `ws-client.js` (Fase 6): HELLO autenticado, reconexión backoff 2s→60s, escucha `ACTIVATE` y `DEACTIVATE`; el backend ya envía ambos. Faltan solo los **acks** (`ACTIVATED`/`DEACTIVATED`). `[PARCIAL]`
 - `npm audit` (huellero/): **13 vulnerabilidades** — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). `[PENDIENTE]` — sin prisa pero sin olvidarlo; la corrección requiere `npm audit fix --force` con cambios breaking (electron@44, electron-builder@26).
 
-Consecuencia: captura, enrolamiento y sincronización ya funcionan; lo único que falta para identificar en el kiosko es cachear las plantillas (`getPlantillasFicha()` devuelve `[]`).
+Consecuencia: captura, enrolamiento, identificación y sincronización ya funcionan de punta a punta (verificado con hardware real).
 
 # Estructura actual de huellero
 
@@ -442,7 +445,7 @@ data/
   - Debe **evitar duplicados** mediante UUID/idempotencia.
 - El cron de las 12:00 AM **no es el único** mecanismo de sincronización.
 
-`[PENDIENTE]` — Método exacto de **backoff** para los reintentos (intervalo fijo vs. exponencial) todavía no está decidido.
+`[DECIDIDO]` — Backoff de reintentos de sync: polling fijo de 5 min para el backlog offline (no tiempo real). La reconexión del WebSocket usa backoff exponencial 2s→60s (independiente del sync). `[IMPLEMENTADO]`
 
 # Comunicación
 
@@ -454,13 +457,13 @@ data/
 ## REST (`[IMPLEMENTADO]` parcial)
 
 ```text
-POST /api/clases/activar            [IMPLEMENTADO] { deviceId, fichaId, instructorId }
-POST /api/clases/finalizar          [PENDIENTE]  { fichaId, instructorId }
+POST /api/clases/activar            [IMPLEMENTADO] { fichaId, instructorId } (JWT + identidad; resuelve deviceId desde Ficha.dispositivoId)
+POST /api/clases/finalizar          [IMPLEMENTADO] { fichaId, instructorId } (JWT + identidad)
 GET  /api/clases/estado             [PENDIENTE]  (restaurar estado al recargar el dashboard)
 POST /api/dispositivos/registrar    [IMPLEMENTADO] { nombre? } → { deviceId, token } (hash bcryptjs; token solo en esta respuesta)
-GET  /api/dispositivos              [PENDIENTE]  (listado admin)
-PUT  /api/dispositivos/:id/fichas   [PENDIENTE]  (admin: agregar/quitar fichas)
-GET  /api/fichas/:id/plantillas     [PENDIENTE]  (plantillas de la ficha, para caché local)
+GET  /api/dispositivos              [IMPLEMENTADO] (listado admin, con fichas asociadas)
+PUT  /api/dispositivos/:id/fichas   [IMPLEMENTADO] (admin: reemplaza el conjunto de fichas del dispositivo)
+GET  /api/fichas/:id/plantillas     [IMPLEMENTADO] (plantillas de la ficha, para caché local; auth deviceId+token)
 POST /api/asistencias/sync          [IMPLEMENTADO] { deviceId, token, asistencias:[{uuid,...}] } (idempotente por uuid)
 POST /api/enrolamiento/guardar      [IMPLEMENTADO] { estudianteId, fichaId, dedo, template }
 ```
@@ -469,7 +472,7 @@ POST /api/enrolamiento/guardar      [IMPLEMENTADO] { estudianteId, fichaId, dedo
 
 ```text
 Backend → Huellero:
-  ACTIVATE [IMPLEMENTADO] / DEACTIVATE [PENDIENTE]
+  ACTIVATE [IMPLEMENTADO] / DEACTIVATE [IMPLEMENTADO]
   ENROLL_START / ENROLL_CANCEL       (superados: el enrolamiento es local + REST guardar)
   SYNC_ACK [PENDIENTE]
 
@@ -503,14 +506,14 @@ Backend → Dashboard:
 | # | Fase | Estado |
 |---|---|---|
 | 1 | Aislar `fingerprint.js` | ✅ Implementada |
-| 2 | Esqueleto Electron + UI (kiosko, login docente) | ✅ Implementada (verificación koffi/dpfj.dll aún sin confirmar con captura real) |
+| 2 | Esqueleto Electron + UI (kiosko, login docente) | ✅ Implementada — verificación koffi/dpfj.dll confirmada con captura real |
 | 3 | Configuración e identidad del dispositivo (deviceId + token) | ✅ Implementada — registro, persistencia en `config.json`, reintento |
 | 4 | Almacenamiento local (`data/*.json`) | ✅ Implementada — `store.js` persiste en disco |
 | 5 | Captura DigitalPersona | ✅ Implementada — captura real vía `dpfpdd.dll` (síncrona, timeout 10s), DPI parametrizado (700) |
-| 6 | WebSocket (cliente huellero + hub backend) | `[PARCIAL]` — HELLO autenticado + ACTIVATE + reconexión con backoff + reenvío de ACTIVATE pendiente; faltan DEACTIVATE y acks |
-| 7 | Activación/desactivación remota | `[PENDIENTE]` |
-| 8 | Enrolamiento remoto | `[PENDIENTE]` |
-| 9 | Registro de asistencias | `[PENDIENTE]` |
+| 6 | WebSocket (cliente huellero + hub backend) | `[PARCIAL]` — HELLO autenticado + ACTIVATE/DEACTIVATE + reconexión con backoff + reenvío de ACTIVATE pendiente; faltan los acks (ACTIVATED/DEACTIVATED) |
+| 7 | Activación/desactivación remota | ✅ Implementada (2026-09-08) — `activar`/`finalizar` (DEACTIVATE) |
+| 8 | Enrolamiento remoto | ✅ Implementada — enrolamiento **local** desde la app (supera el flujo remoto por WebSocket) |
+| 9 | Registro de asistencias | ✅ Implementada (2026-09-08) — identificación + registro + sync, verificado con hardware real |
 | 10 | Sincronización offline/online | ✅ Implementada — `sync.js` + `POST /api/asistencias/sync` + `scheduler.js` (00:00 + polling 5 min) |
 | 11 | Pruebas de recuperación y duplicados | `[PENDIENTE]` |
 | 12 | Empaquetado `.exe` | `[PENDIENTE]` |
@@ -550,25 +553,23 @@ Cualquier IA (o persona) que continúe trabajando en este proyecto debe:
 > Consolidado de **todo lo que falta** para completar la app del huellero, en un solo lugar.
 > Estados verificados contra el código el **2026-09-08** (re-verificados para esta consolidación; no asumidos).
 
-**Avance reciente (2026-09-07):** ya están implementados — (1) guardado local de asistencia al identificar (`capturarYVerificar` → `guardarPendiente` con `uuid` + anti-duplicado 2 min), (2) `POST /api/asistencias/sync` (idempotente por `uuid`, auth `deviceId`+`token`), (3) `sync.js` (sube pendientes y limpia los confirmados), y (4) `scheduler.js` (medianoche + polling 5 min + intento al reconectar/nuevo pendiente). El **único bloqueante restante** para cerrar la toma de asistencia es el endpoint de plantillas + su cacheo local (categoría 1). También quedaron resueltos durante la implementación el campo `metodo` en `Asistencia` y el hasheo bcrypt de contraseñas de Admin/Instructor (ver categoría 5).
+**Avance reciente (2026-09-08):** el ciclo completo del huellero está implementado y verificado contra hardware real — enrolamiento, identificación, registro de asistencia, sincronización offline/online (`sync.js` + `scheduler.js` + `POST /api/asistencias/sync` idempotente) y gestión de clases activas (`activar`/`finalizar` con `DEACTIVATE`, invariante atómica con índice parcial único, y autenticación JWT + validación de identidad en ambos endpoints). La asociación dispositivo↔ficha también está completa (backend + UI `PanelDispositivos.vue`). Quedan pendientes (categorías 2, 5 y 6): acks del protocolo WS, `GET /api/clases/estado`, el índice único de asistencias, la migración del estado visual del instructor, `npm audit`, y el empaquetado `.exe`.
 
-## 1. Bloqueante crítico: el registro de asistencia real `[PARCIAL]`
+## 1. Registro de asistencia real `[IMPLEMENTADO]`
 
-El enrolamiento y la **persistencia de la asistencia** (guardado local + sincronización) ya están implementados. Lo que **todavía falta** es la **identificación**, porque no hay plantillas cacheadas. Estado:
+El ciclo completo de toma de asistencia ya funciona de punta a punta y fue verificado con hardware real (Gabriel Arias identificado y asistencia registrada en Mongo):
 
-- `store.getPlantillasFicha()` (`huellero/src/main/store.js:72`) **siempre devuelve `[]`**: el objeto `plantillas` se carga vacío en `init()` y **no existe ningún setter** que lo llene. → **Este es el bloqueante.**
-- **No existe** `GET /api/fichas/:id/plantillas` en `backend/routes/fichas.js` ni en `backend/controllers/fichaController.js`.
-- `engine.capturarYVerificar()` ya captura, identifica, y al haber match **guarda localmente** la asistencia (`uuid`, anti-duplicado 2 min, `metodo:'HUELLA'`) vía `store.guardarPendiente()`; `sync.js`/`scheduler.js` la suben vía `POST /api/asistencias/sync` (idempotente). Con plantillas vacías, `verifyFingerprint` devuelve "No hay estudiantes enrolados para comparar", por lo que **nunca hay match**.
-
-Falta para cerrar el ciclo:
-1. `GET /api/fichas/:id/plantillas` en backend (devolver los `huellaTemplate` de los estudiantes enrolados de esa ficha).
-2. Descargar y cachear plantillas en el huellero (nuevo setter en `store.js`, p. ej. `guardarPlantillasFicha()`), disparado al recibir `ACTIVATE` (y re-descarga al reconectar/HELLO).
+- `GET /api/fichas/:id/plantillas` implementado (`backend/routes/fichas.js` + `fichaController.getPlantillasFicha`), protegido con auth `deviceId`+`token` (headers `x-device-id`/`x-device-token`).
+- Descarga y cacheo local implementado: `store.guardarPlantillasFicha()` (`huellero/src/main/store.js`), disparado al recibir `ACTIVATE`, al reconectar (HELLO) y al capturar sin plantillas cacheadas (`engine.descargarPlantillas()` con reintento 60s + guard anti-concurrencia).
+- `capturarYVerificar()` captura, identifica y guarda localmente (`uuid`, anti-duplicado 2 min, `metodo:'HUELLA'`); `sync.js`/`scheduler.js` suben vía `POST /api/asistencias/sync` (idempotente).
 
 ## 2. Robustez del ciclo de clases activas `[PARCIAL]`
 
-- **DEACTIVATE / `POST /api/clases/finalizar`**: no implementado. Solo existe `ACTIVATE` (`emitirActivacion` en `backend/services/socketService.js:172`); `huellero/src/main/ws-client.js` solo escucha `ACTIVATE`; `backend/routes/clases.js` solo tiene `/activar`. `[PENDIENTE]`
-- **Invariante "una clase activa por dispositivo"**: `claseController.activar` (`backend/controllers/claseController.js:11-19`) hace `findOne` + `save`/`create` **no atómico**; el modelo `Clase` (`backend/models/Clase.js`) **no tiene índice único** sobre `{deviceId, estado:'Activa'}` → ventana de carrera real. Resolver con `findOneAndUpdate` + upsert atómico o índice parcial único. `[PENDIENTE]`
-- **Ventana de carrera en el anti-duplicado de asistencias**: `procesarAsistencia` usa `findOneAndUpdate` con upsert sobre `(estudianteId, fichaId, fecha)`, pero **sin un índice único real** a nivel de MongoDB sobre esos tres campos. Dos requests verdaderamente concurrentes (con uuid distintos) podrían insertar dos documentos `Asistencia` para el mismo estudiante/ficha/día. Mismo patrón de riesgo que `Clase.activar` (esta categoría). Mitigado en la práctica por: (a) el anti-duplicado de 2 min en el huellero (Map `ultimasAsistencias`, `engine.js`) que evita la mayoría de casos reales, y (b) que un solo estudiante solo puede estar frente a un lector a la vez (menor probabilidad de concurrencia real que en `Clase.activar`). Resolver agregando `Asistencia.index({estudianteId:1, fichaId:1, fecha:1}, {unique:true})` — requiere primero limpiar/consolidar duplicados históricos existentes en la BD, si los hay, antes de crear el índice (o Mongo rechazará crearlo). `[PENDIENTE]`
+- **DEACTIVATE / `POST /api/clases/finalizar`**: implementado (2026-09-08). `claseController.finalizar()` busca la clase `Activa` (por `fichaId`+`instructorId`), la pasa a `Finalizada` (`finalizadaAt`) y emite `DEACTIVATE` vía `socketService.emitirDesactivacion()` al `deviceId` resuelto desde el documento. `[IMPLEMENTADO]`
+- **Invariante "una clase activa por dispositivo"**: implementada (2026-09-08). `claseController.activar()` usa `findOneAndUpdate` atómico (upsert) + índice parcial único en `Clase` (`{deviceId:1}`, `partialFilterExpression:{estado:'Activa'}`) + manejo del `E11000`. `[IMPLEMENTADO]`
+- **Autenticación de `activar`/`finalizar`**: implementada (2026-09-08). Ambas rutas usan `autenticarJWT` y validan que `req.usuario.id === instructorId` del body (403 si no coincide); probado en vivo (401 sin token, 403 con instructorId de otro). `[RESUELTO]`
+- **Estado visual del instructor (migración pendiente)**: en `PanelInstructor.vue`, `sesionRemotaActiva` y el feed en vivo siguen alimentados por el flujo viejo de socket (`estado_sesion`/`docente:nueva_marcacion`); el botón ya llama a `POST /api/clases/activar`/`finalizar`, pero el estado puede desincronizarse (el listener viejo lo sobrescribe al cambiar de ficha) y no se restaura al recargar. `[PENDIENTE]`
+- **Ventana de carrera en el anti-duplicado de asistencias**: `procesarAsistencia` usa `findOneAndUpdate` con upsert sobre `(estudianteId, fichaId, fecha)`, pero **sin un índice único real** a nivel de MongoDB sobre esos tres campos. Dos requests verdaderamente concurrentes (con uuid distintos) podrían insertar dos documentos `Asistencia` para el mismo estudiante/ficha/día. Mitigado en la práctica por: (a) el anti-duplicado de 2 min en el huellero (Map `ultimasAsistencias`, `engine.js`) que evita la mayoría de casos reales, y (b) que un solo estudiante solo puede estar frente a un lector a la vez (menor probabilidad de concurrencia real). Resolver agregando `Asistencia.index({estudianteId:1, fichaId:1, fecha:1}, {unique:true})` — requiere primero limpiar/consolidar duplicados históricos existentes en la BD, si los hay, antes de crear el índice (o Mongo rechazará crearlo). `[PENDIENTE]`
 - **Acks `ACTIVATED`/`DEACTIVATED`**: diseñados, nunca implementados. `[PENDIENTE]`
 - **`GET /api/clases/estado`** (restaurar estado al recargar el dashboard): no existe. `[PENDIENTE]`
 
@@ -581,10 +582,10 @@ Falta para cerrar el ciclo:
 - `POST /api/asistencias/sync`: implementado (auth `deviceId`+`token`, idempotente por `uuid`, resultados por ítem). `[IMPLEMENTADO]`
 - **Fase 11 (pruebas de recuperación y duplicados)**: aún `[PENDIENTE]` — el código de sync e idempotencia está, pero no se han ejecutado pruebas formales de recuperación tras caída ni de duplicados masivos.
 
-## 4. Administración: asociación dispositivo↔ficha `[PARCIAL]`
+## 4. Administración: asociación dispositivo↔ficha `[IMPLEMENTADO]`
 
-- **Backend `[IMPLEMENTADO]` (2026-09-08)**: `Ficha.dispositivoId` (`Ficha.js`), `GET /api/dispositivos` y `PUT /api/dispositivos/:id/fichas` (`dispositivoController.js` + `routes/dispositivos.js`, rol Admin). `POST /api/clases/activar` ya resuelve `deviceId` desde `fichaId` (ya no lo recibe en el body).
-- **UI `[PENDIENTE]`**: no existe la sección "Dispositivos/Huelleros" en el dashboard (`frontend/src/App.vue`); por ahora la asociación se hace vía API (Postman) o a futuro desde la UI de Admin.
+- **Backend `[IMPLEMENTADO]` (2026-09-08)**: `Ficha.dispositivoId` (`Ficha.js`), `GET /api/dispositivos` y `PUT /api/dispositivos/:id/fichas` (`dispositivoController.js` + `routes/dispositivos.js`, rol Admin). `asociarFichas()` trata el array recibido como el conjunto **completo** (reemplazo total: desasocia las fichas que ya no vienen). `POST /api/clases/activar` resuelve `deviceId` desde `fichaId`.
+- **UI `[IMPLEMENTADO]` (2026-09-08)**: sección "Dispositivos" en el dashboard de Admin (`PanelDispositivos.vue` + `App.vue`), con listado, selector de fichas, indicador de movimiento ("⚠️ se moverá desde…") y guardado; verificado end-to-end.
 
 ## 5. Calidad y mantenimiento (sin urgencia, no olvidar)
 
