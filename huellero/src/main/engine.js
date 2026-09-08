@@ -13,6 +13,15 @@ let avisoSesion = null
 let onEstadoChange = null
 let onEnrolarProgreso = null
 let enrolamientoCancelado = false
+let plantillasRetryTimer = null
+let plantillasFichaActual = null
+let descargandoPlantillas = false
+
+// Registro en memoria de la última asistencia registrada por (claveClase, estudianteId).
+// Sobrevive a la sincronización (a diferencia de la cola de pendientes, que se limpia
+// tras el sync), para dar feedback correcto de duplicado dentro de la ventana de 2 min.
+// La garantía dura de "un registro por estudiante/ficha/día" está en el backend (sync).
+const ultimasAsistencias = new Map()
 
 export function setOnEstadoChange(cb) {
   onEstadoChange = cb
@@ -38,6 +47,14 @@ export async function init() {
   await store.init()
   inicializarCaptura()
   wsClient.onConnectionChange(notificarEstado)
+  wsClient.onConnectionChange((conectado) => {
+    if (conectado) {
+      const clase = store.getClaseActiva()
+      if (clase?.fichaId) {
+        descargarPlantillas(clase.fichaId)
+      }
+    }
+  })
   wsClient.onActivate((payload) => {
     store.setClaseActiva({
       fichaId: payload?.fichaId ?? null,
@@ -46,9 +63,13 @@ export async function init() {
       estado: 'Activa',
     })
     notificarEstado()
+    if (payload?.fichaId) {
+      descargarPlantillas(payload.fichaId)
+    }
   })
   wsClient.onDeactivate(() => {
     store.setClaseActiva(null)
+    detenerReintentoPlantillas()
     notificarEstado()
   })
   wsClient.connect(getConfig())
@@ -76,6 +97,77 @@ export function getStatus() {
   }
 }
 
+// Descarga y cachea las plantillas de la ficha (identificación en el kiosko).
+// Si falla, NO desactiva la clase: solo reintenta con backoff (60s) hasta tener
+// éxito o hasta que la clase se desactive. Mismo espíritu que el reintento de
+// registro de dispositivo de la Fase 3.
+async function descargarPlantillas(fichaId) {
+  if (!fichaId) return
+  // Guarda anti-concurrencia: evita lanzar varias descargas simultáneas si
+  // varias capturas/reconexiones ocurren seguidas mientras la caché sigue vacía.
+  if (descargandoPlantillas) return
+
+  const { backendUrl, deviceId, token } = getConfig()
+  if (!deviceId || !token) {
+    programarReintentoPlantillas(fichaId)
+    return
+  }
+
+  descargandoPlantillas = true
+  try {
+    const res = await fetch(`${backendUrl}/api/fichas/${encodeURIComponent(fichaId)}/plantillas`, {
+      headers: {
+        'x-device-id': String(deviceId),
+        'x-device-token': String(token),
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+
+    const plantillas = await res.json().catch(() => null)
+    if (!Array.isArray(plantillas)) {
+      throw new Error('Respuesta inválida del backend')
+    }
+
+    store.guardarPlantillasFicha(fichaId, plantillas)
+    limpiarReintentoPlantillas()
+    console.log(`[engine] Plantillas de la ficha ${fichaId} cacheadas: ${plantillas.length}`)
+  } catch (err) {
+    console.warn(`[engine] No se pudo descargar las plantillas de la ficha ${fichaId}: ${err.message}`)
+    programarReintentoPlantillas(fichaId)
+  } finally {
+    descargandoPlantillas = false
+  }
+}
+
+function programarReintentoPlantillas(fichaId) {
+  plantillasFichaActual = String(fichaId)
+  limpiarReintentoPlantillas()
+  plantillasRetryTimer = setTimeout(() => {
+    const clase = store.getClaseActiva()
+    if (clase && String(clase.fichaId) === plantillasFichaActual) {
+      descargarPlantillas(plantillasFichaActual)
+    } else {
+      plantillasFichaActual = null
+    }
+  }, 60000)
+}
+
+function limpiarReintentoPlantillas() {
+  if (plantillasRetryTimer) {
+    clearTimeout(plantillasRetryTimer)
+    plantillasRetryTimer = null
+  }
+}
+
+function detenerReintentoPlantillas() {
+  plantillasFichaActual = null
+  limpiarReintentoPlantillas()
+}
+
 export async function capturarYVerificar() {
   const clase = store.getClaseActiva()
   if (!clase) {
@@ -96,16 +188,23 @@ export async function capturarYVerificar() {
   }
 
   const plantillas = await store.getPlantillasFicha(clase.fichaId)
+  if (plantillas.length === 0) {
+    // Sin plantillas cacheadas: dispara una descarga inmediata (auto-curación),
+    // sin bloquear esta verificación (que devolverá "sin match" esta ronda).
+    descargarPlantillas(clase.fichaId)
+  }
   const resultado = identificarEstudiante(imagen, plantillas, dpi)
 
   // Si identificó a un estudiante, persistir la asistencia localmente (offline-ready).
   if (resultado.match && resultado.studentId) {
+    let duplicado = false
     try {
-      registrarAsistenciaLocal(clase, resultado, capturaTimestamp)
+      duplicado = registrarAsistenciaLocal(clase, resultado, capturaTimestamp)
     } catch (err) {
       // Un fallo de guardado no debe ocultar el resultado de identificación.
       console.error('[engine] No se pudo guardar la asistencia pendiente:', err.message)
     }
+    resultado.duplicado = duplicado
   }
 
   return resultado
@@ -120,8 +219,11 @@ function registrarAsistenciaLocal(clase, resultado, timestamp) {
   // La clase se identifica por claseId; si aún no llega (backend no lo envía), por fichaId.
   const claveClase = clase.claseId != null ? String(clase.claseId) : String(clase.fichaId)
 
+  const claveEstudiante = `${claveClase}:${estudianteId}`
+
+  // 1. Cola local no sincronizada (sobrevive a reinicio, pero se limpia al sincronizar).
   const pendientes = store.getPendientes()
-  const yaMarcado = pendientes.some((p) => {
+  const yaMarcadoPendiente = pendientes.some((p) => {
     const pClaveClase = p.claseId != null ? String(p.claseId) : String(p.fichaId)
     return (
       String(p.estudianteId) === estudianteId &&
@@ -131,9 +233,13 @@ function registrarAsistenciaLocal(clase, resultado, timestamp) {
     )
   })
 
-  if (yaMarcado) {
+  // 2. Registro en memoria (sobrevive a la sincronización, no al reinicio).
+  const ultimo = ultimasAsistencias.get(claveEstudiante)
+  const yaMarcadoReciente = ultimo != null && (timestamp - ultimo <= VENTANA_DEDUP_MS)
+
+  if (yaMarcadoPendiente || yaMarcadoReciente) {
     console.log(`[engine] Asistencia ya registrada para ${estudianteId} en esta clase; se omite duplicado.`)
-    return
+    return true
   }
 
   const asistencia = {
@@ -147,10 +253,12 @@ function registrarAsistenciaLocal(clase, resultado, timestamp) {
   }
 
   store.guardarPendiente(asistencia)
+  ultimasAsistencias.set(claveEstudiante, timestamp)
   console.log(`[engine] Asistencia guardada localmente: ${asistencia.uuid} (estudiante ${estudianteId})`)
 
   // Avisa al scheduler para intentar sincronizar pronto (sin esperar al polling).
   notificarPendienteNuevo()
+  return false
 }
 
 export async function loginDocente(correo, password) {

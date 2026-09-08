@@ -38,6 +38,10 @@ function persistirPendientes() {
   escribirJSON(PENDIENTES_PATH, pendientes)
 }
 
+function persistirPlantillas() {
+  escribirJSON(PLANTILLAS_PATH, plantillas)
+}
+
 export async function init() {
   asegurarDirectorio()
 
@@ -73,6 +77,12 @@ export async function getPlantillasFicha(fichaId) {
   const clave = String(fichaId)
   const lista = plantillas[clave]
   return Array.isArray(lista) ? lista : []
+}
+
+export function guardarPlantillasFicha(fichaId, lista) {
+  const clave = String(fichaId)
+  plantillas[clave] = Array.isArray(lista) ? lista : []
+  persistirPlantillas()
 }
 
 export function guardarPendiente(asistencia) {

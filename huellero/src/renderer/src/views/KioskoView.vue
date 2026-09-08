@@ -50,7 +50,11 @@ async function leerHuella() {
   try {
     const res = await window.huellero.capturarYVerificar()
     if (res.match) {
-      resultado.value = { tipo: 'ok', texto: `${res.nombres} ${res.apellidos}` }
+      if (res.duplicado) {
+        resultado.value = { tipo: 'dup', texto: `${res.nombres} ${res.apellidos}` }
+      } else {
+        resultado.value = { tipo: 'ok', texto: `${res.nombres} ${res.apellidos}` }
+      }
     } else {
       resultado.value = { tipo: 'error', texto: res.error || 'Huella no reconocida' }
     }
@@ -90,6 +94,10 @@ async function leerHuella() {
       <div v-if="resultado" class="resultado" :class="resultado.tipo">
         <template v-if="resultado.tipo === 'ok'">
           <strong>Asistencia registrada</strong>
+          <span>{{ resultado.texto }}</span>
+        </template>
+        <template v-else-if="resultado.tipo === 'dup'">
+          <strong>Ya registraste tu asistencia</strong>
           <span>{{ resultado.texto }}</span>
         </template>
         <template v-else>
@@ -199,6 +207,11 @@ h1 {
 .resultado.ok {
   background: rgba(34, 197, 94, 0.12);
   color: var(--accent);
+}
+
+.resultado.dup {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warn);
 }
 
 .resultado.error {

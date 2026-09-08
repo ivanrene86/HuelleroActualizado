@@ -1,14 +1,11 @@
 import { ipcMain, app, BrowserWindow } from "electron";
 import path, { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { randomUUID } from "crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { io } from "socket.io-client";
 import koffi from "koffi";
 import { PNG } from "pngjs";
-import __cjs_mod__ from "node:module";
-const __filename = import.meta.filename;
-const __dirname = import.meta.dirname;
-const require2 = __cjs_mod__.createRequire(import.meta.url);
 const CONFIG_PATH = resolve(process.cwd(), "config.json");
 const DEFAULTS = {
   deviceId: null,
@@ -107,6 +104,12 @@ function escribirJSON(ruta, valor) {
 function persistirEstado() {
   escribirJSON(ESTADO_PATH, estado);
 }
+function persistirPendientes() {
+  escribirJSON(PENDIENTES_PATH, pendientes);
+}
+function persistirPlantillas() {
+  escribirJSON(PLANTILLAS_PATH, plantillas);
+}
 async function init$1() {
   asegurarDirectorio();
   if (!existsSync(ESTADO_PATH)) {
@@ -137,53 +140,157 @@ async function getPlantillasFicha(fichaId) {
   const lista = plantillas[clave];
   return Array.isArray(lista) ? lista : [];
 }
+function guardarPlantillasFicha(fichaId, lista) {
+  const clave = String(fichaId);
+  plantillas[clave] = Array.isArray(lista) ? lista : [];
+  persistirPlantillas();
+}
+function guardarPendiente(asistencia) {
+  if (!asistencia) return;
+  pendientes.push(asistencia);
+  persistirPendientes();
+}
 function getPendientes() {
   return pendientes;
 }
+function marcarSincronizadas(uuids) {
+  if (!Array.isArray(uuids) || uuids.length === 0) return;
+  const conjunto = new Set(uuids.map((u) => String(u)));
+  pendientes = pendientes.filter((p) => !conjunto.has(String(p.uuid)));
+  persistirPendientes();
+}
 let socket = null;
-let online = false;
-let onStatusChange = null;
+let connected = false;
+let currentConfig = null;
+const activateHandlers = [];
+const deactivateHandlers = [];
+const connectionChangeHandlers = [];
+function log(...args) {
+  console.log("[ws-client]", ...args);
+}
+function logError(...args) {
+  console.error("[ws-client]", ...args);
+}
+function setConnected(value) {
+  if (connected === value) return;
+  connected = value;
+  connectionChangeHandlers.forEach((fn) => {
+    try {
+      fn(value);
+    } catch (err) {
+      logError("Error en onConnectionChange:", err.message);
+    }
+  });
+}
+function normalizarPayload(payload) {
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload);
+    } catch (err) {
+      logError("Payload JSON malformado ignorado:", err.message);
+      return {};
+    }
+  }
+  return payload && typeof payload === "object" ? payload : {};
+}
+function despachar(handlers, payload, evento) {
+  const data = normalizarPayload(payload);
+  handlers.forEach((fn) => {
+    try {
+      fn(data);
+    } catch (err) {
+      logError(`Error en handler de ${evento}:`, err.message);
+    }
+  });
+}
 function connect(config) {
-  if (!config.deviceId || !config.token || !config.wsUrl) {
-    online = false;
+  currentConfig = config || {};
+  const { deviceId, token, wsUrl, backendUrl } = currentConfig;
+  if (!deviceId || !token) {
+    logError("connect() ignorado: faltan deviceId/token.");
+    setConnected(false);
+    return;
+  }
+  const url = wsUrl || (backendUrl ? backendUrl.replace(/\/+$/, "") : void 0);
+  if (!url) {
+    logError("connect() ignorado: falta wsUrl/backendUrl.");
+    setConnected(false);
     return;
   }
   if (socket) {
     socket.disconnect();
+    socket = null;
   }
-  socket = io(config.wsUrl, {
+  socket = io(url, {
     transports: ["websocket", "polling"],
     reconnection: true,
-    // Backoff de reconexión: empieza en 2s y duplica hasta un máximo de 30s entre intentos.
+    reconnectionAttempts: Infinity,
+    // Backoff exponencial: 2s inicial, duplicando hasta un tope de 60s.
     reconnectionDelay: 2e3,
-    reconnectionDelayMax: 3e4
+    reconnectionDelayMax: 6e4,
+    randomizationFactor: 0.5
   });
   socket.on("connect", () => {
-    online = true;
-    socket.emit("HELLO", { deviceId: config.deviceId, token: config.token });
-    notifyStatus();
+    log(`Conectado a ${url}`);
+    socket.emit("HELLO", { deviceId: String(deviceId), token: String(token) });
+    setConnected(true);
   });
-  socket.on("disconnect", () => {
-    online = false;
-    notifyStatus();
+  socket.on("disconnect", (reason) => {
+    log(`Desconectado (${reason})`);
+    setConnected(false);
+  });
+  socket.on("connect_error", (err) => {
+    logError("Error de conexión:", err.message);
   });
   socket.on("ACTIVATE", (payload) => {
-    setClaseActiva({
-      fichaId: payload?.fichaId ?? null,
-      instructorId: payload?.instructorId ?? null,
-      estado: "Activa"
-    });
+    log("ACTIVATE recibido:", payload);
+    despachar(activateHandlers, payload, "onActivate");
+  });
+  socket.on("DEACTIVATE", (payload) => {
+    log("DEACTIVATE recibido:", payload);
+    despachar(deactivateHandlers, payload, "onDeactivate");
   });
 }
-function getConnectionStatus() {
-  return online;
+function isConnected() {
+  return connected;
 }
-function setOnStatusChange(cb) {
-  onStatusChange = cb;
+function onActivate(fn) {
+  if (typeof fn === "function") activateHandlers.push(fn);
+  return () => {
+    const i = activateHandlers.indexOf(fn);
+    if (i >= 0) activateHandlers.splice(i, 1);
+  };
 }
-function notifyStatus() {
-  if (onStatusChange) onStatusChange();
+function onDeactivate(fn) {
+  if (typeof fn === "function") deactivateHandlers.push(fn);
+  return () => {
+    const i = deactivateHandlers.indexOf(fn);
+    if (i >= 0) deactivateHandlers.splice(i, 1);
+  };
 }
+function onConnectionChange(fn) {
+  if (typeof fn === "function") connectionChangeHandlers.push(fn);
+  return () => {
+    const i = connectionChangeHandlers.indexOf(fn);
+    if (i >= 0) connectionChangeHandlers.splice(i, 1);
+  };
+}
+function send(type, payload) {
+  if (!socket || !connected) {
+    logError(`send('${type}') ignorado: socket no conectado`);
+    return false;
+  }
+  socket.emit(type, payload);
+  return true;
+}
+const wsClient = {
+  connect,
+  isConnected,
+  onActivate,
+  onDeactivate,
+  onConnectionChange,
+  send
+};
 const __dirname$3 = path.dirname(fileURLToPath(import.meta.url));
 const dllFolder$1 = path.resolve(__dirname$3, "../../dll");
 process.env.PATH = `${dllFolder$1};${process.env.PATH}`;
@@ -528,7 +635,132 @@ async function capturarHuella(timeoutMs = TIMEOUT_CAPTURA_MS) {
 }
 async function syncPendientes() {
   const pendientes2 = getPendientes();
-  return { procesados: pendientes2.length, ok: true };
+  if (!pendientes2 || pendientes2.length === 0) {
+    return { ok: true, procesados: 0 };
+  }
+  const { backendUrl, deviceId, token } = getConfig();
+  if (!deviceId || !token) {
+    console.error("[sync] Sin deviceId/token: no se puede sincronizar todavía.");
+    return { ok: false, error: "Dispositivo no registrado aún" };
+  }
+  let res;
+  try {
+    res = await fetch(`${backendUrl}/api/asistencias/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId, token, asistencias: pendientes2 }),
+      signal: AbortSignal.timeout(1e4)
+    });
+  } catch (err) {
+    console.error("[sync] Error de red al sincronizar:", err.message);
+    return { ok: false, error: "Sin conexión: no se pudo sincronizar" };
+  }
+  if (!res.ok) {
+    const data2 = await res.json().catch(() => null);
+    console.error(`[sync] Backend respondió ${res.status}:`, data2?.error || res.statusText);
+    return { ok: false, error: data2?.error || `Error del backend (${res.status})` };
+  }
+  const data = await res.json().catch(() => null);
+  if (!data || !data.ok || !Array.isArray(data.resultados)) {
+    console.error("[sync] Respuesta inesperada del backend:", data);
+    return { ok: false, error: "Respuesta inesperada del backend" };
+  }
+  let guardadas = 0;
+  let duplicadas = 0;
+  let errores = 0;
+  const uuidsConfirmados = [];
+  for (const r of data.resultados) {
+    if (r.estado === "guardada") {
+      guardadas++;
+      uuidsConfirmados.push(r.uuid);
+    } else if (r.estado === "duplicada") {
+      duplicadas++;
+      uuidsConfirmados.push(r.uuid);
+    } else {
+      errores++;
+      console.warn(`[sync] Pendiente ${r.uuid} no sincronizado: ${r.error || r.estado}`);
+    }
+  }
+  try {
+    marcarSincronizadas(uuidsConfirmados);
+  } catch (err) {
+    console.error("[sync] Error al limpiar pendientes sincronizados:", err.message);
+  }
+  const pendientesRestantes = getPendientes().length;
+  console.log(
+    `[sync] ${guardadas} guardadas, ${duplicadas} duplicadas, ${errores} con error. Pendientes restantes: ${pendientesRestantes}`
+  );
+  return { ok: true, guardadas, duplicadas, errores, pendientesRestantes };
+}
+const POLLING_INTERVAL_MS = 5 * 60 * 1e3;
+let pollingTimer = null;
+let pollingActivo = false;
+let syncing = false;
+let iniciado = false;
+async function sincronizar() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    await syncPendientes();
+    if (getPendientes().length === 0) {
+      detenerPolling();
+    } else {
+      iniciarPolling();
+    }
+  } catch (err) {
+    console.error("[scheduler] Error inesperado en sincronización:", err.message);
+    iniciarPolling();
+  } finally {
+    syncing = false;
+  }
+}
+function iniciarPolling() {
+  if (pollingActivo) return;
+  pollingActivo = true;
+  console.log(`[scheduler] Polling iniciado (cada ${POLLING_INTERVAL_MS / 6e4} min).`);
+  programarTick();
+}
+function programarTick() {
+  pollingTimer = setTimeout(async () => {
+    await sincronizar();
+    if (pollingActivo) programarTick();
+  }, POLLING_INTERVAL_MS);
+}
+function detenerPolling() {
+  if (!pollingActivo) return;
+  pollingActivo = false;
+  if (pollingTimer) {
+    clearTimeout(pollingTimer);
+    pollingTimer = null;
+  }
+  console.log("[scheduler] Polling detenido (sin pendientes).");
+}
+function programarMediaNoche() {
+  const ahora = /* @__PURE__ */ new Date();
+  const siguiente = new Date(ahora);
+  siguiente.setHours(24, 0, 0, 0);
+  const ms = siguiente.getTime() - ahora.getTime();
+  setTimeout(() => {
+    console.log("[scheduler] Medianoche: sincronización obligatoria.");
+    sincronizar();
+    programarMediaNoche();
+  }, ms);
+  console.log(`[scheduler] Próxima sincronización obligatoria en ~${Math.round(ms / 6e4)} min.`);
+}
+function iniciarScheduler() {
+  if (iniciado) return;
+  iniciado = true;
+  programarMediaNoche();
+  wsClient.onConnectionChange((conectado) => {
+    if (conectado && getPendientes().length > 0) {
+      console.log("[scheduler] Reconexión con pendientes: sincronizando de inmediato.");
+      sincronizar();
+    }
+  });
+  console.log("[scheduler] Scheduler iniciado.");
+}
+function notificarPendienteNuevo() {
+  sincronizar();
 }
 const __dirname$2 = path.dirname(fileURLToPath(import.meta.url));
 const dllFolder = path.resolve(__dirname$2, "../dll");
@@ -859,6 +1091,9 @@ let avisoSesion = null;
 let onEstadoChange = null;
 let onEnrolarProgreso = null;
 let enrolamientoCancelado = false;
+let plantillasRetryTimer = null;
+let plantillasFichaActual = null;
+let descargandoPlantillas = false;
 function setOnEstadoChange(cb) {
   onEstadoChange = cb;
 }
@@ -877,17 +1112,42 @@ function notificarProgresoEnrolamiento(payload) {
 async function init() {
   await init$1();
   inicializarCaptura();
-  setOnStatusChange(notificarEstado);
-  connect(getConfig());
+  wsClient.onConnectionChange(notificarEstado);
+  wsClient.onConnectionChange((conectado) => {
+    if (conectado) {
+      const clase = getClaseActiva();
+      if (clase?.fichaId) {
+        descargarPlantillas(clase.fichaId);
+      }
+    }
+  });
+  wsClient.onActivate((payload) => {
+    setClaseActiva({
+      fichaId: payload?.fichaId ?? null,
+      instructorId: payload?.instructorId ?? null,
+      claseId: payload?.claseId ?? null,
+      estado: "Activa"
+    });
+    notificarEstado();
+    if (payload?.fichaId) {
+      descargarPlantillas(payload.fichaId);
+    }
+  });
+  wsClient.onDeactivate(() => {
+    setClaseActiva(null);
+    detenerReintentoPlantillas();
+    notificarEstado();
+  });
+  wsClient.connect(getConfig());
   syncPendientes();
   iniciarRegistroDispositivo(() => {
-    connect(getConfig());
+    wsClient.connect(getConfig());
     notificarEstado();
   });
 }
 function getStatus() {
   return {
-    online: getConnectionStatus(),
+    online: wsClient.isConnected(),
     claseActiva: getClaseActiva() || null,
     dispositivoRegistrado: tieneIdentidad(),
     docente: docente ? {
@@ -899,6 +1159,62 @@ function getStatus() {
     avisoSesion
   };
 }
+async function descargarPlantillas(fichaId) {
+  if (!fichaId) return;
+  if (descargandoPlantillas) return;
+  const { backendUrl, deviceId, token } = getConfig();
+  if (!deviceId || !token) {
+    programarReintentoPlantillas(fichaId);
+    return;
+  }
+  descargandoPlantillas = true;
+  try {
+    const res = await fetch(`${backendUrl}/api/fichas/${encodeURIComponent(fichaId)}/plantillas`, {
+      headers: {
+        "x-device-id": String(deviceId),
+        "x-device-token": String(token)
+      },
+      signal: AbortSignal.timeout(1e4)
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const plantillas2 = await res.json().catch(() => null);
+    if (!Array.isArray(plantillas2)) {
+      throw new Error("Respuesta inválida del backend");
+    }
+    guardarPlantillasFicha(fichaId, plantillas2);
+    limpiarReintentoPlantillas();
+    console.log(`[engine] Plantillas de la ficha ${fichaId} cacheadas: ${plantillas2.length}`);
+  } catch (err) {
+    console.warn(`[engine] No se pudo descargar las plantillas de la ficha ${fichaId}: ${err.message}`);
+    programarReintentoPlantillas(fichaId);
+  } finally {
+    descargandoPlantillas = false;
+  }
+}
+function programarReintentoPlantillas(fichaId) {
+  plantillasFichaActual = String(fichaId);
+  limpiarReintentoPlantillas();
+  plantillasRetryTimer = setTimeout(() => {
+    const clase = getClaseActiva();
+    if (clase && String(clase.fichaId) === plantillasFichaActual) {
+      descargarPlantillas(plantillasFichaActual);
+    } else {
+      plantillasFichaActual = null;
+    }
+  }, 6e4);
+}
+function limpiarReintentoPlantillas() {
+  if (plantillasRetryTimer) {
+    clearTimeout(plantillasRetryTimer);
+    plantillasRetryTimer = null;
+  }
+}
+function detenerReintentoPlantillas() {
+  plantillasFichaActual = null;
+  limpiarReintentoPlantillas();
+}
 async function capturarYVerificar() {
   const clase = getClaseActiva();
   if (!clase) {
@@ -906,15 +1222,54 @@ async function capturarYVerificar() {
   }
   let imagen;
   let dpi;
+  let capturaTimestamp;
   try {
     const captura = await capturarHuella();
     imagen = captura.imagen;
     dpi = captura.dpi;
+    capturaTimestamp = Date.now();
   } catch (err) {
     return { ok: false, error: err.message };
   }
   const plantillas2 = await getPlantillasFicha(clase.fichaId);
-  return identificarEstudiante(imagen, plantillas2, dpi);
+  if (plantillas2.length === 0) {
+    descargarPlantillas(clase.fichaId);
+  }
+  const resultado = identificarEstudiante(imagen, plantillas2, dpi);
+  if (resultado.match && resultado.studentId) {
+    try {
+      registrarAsistenciaLocal(clase, resultado, capturaTimestamp);
+    } catch (err) {
+      console.error("[engine] No se pudo guardar la asistencia pendiente:", err.message);
+    }
+  }
+  return resultado;
+}
+const VENTANA_DEDUP_MS = 2 * 60 * 1e3;
+function registrarAsistenciaLocal(clase, resultado, timestamp) {
+  const estudianteId = String(resultado.studentId);
+  const claveClase = clase.claseId != null ? String(clase.claseId) : String(clase.fichaId);
+  const pendientes2 = getPendientes();
+  const yaMarcado = pendientes2.some((p) => {
+    const pClaveClase = p.claseId != null ? String(p.claseId) : String(p.fichaId);
+    return String(p.estudianteId) === estudianteId && pClaveClase === claveClase && p.timestamp != null && timestamp - p.timestamp <= VENTANA_DEDUP_MS;
+  });
+  if (yaMarcado) {
+    console.log(`[engine] Asistencia ya registrada para ${estudianteId} en esta clase; se omite duplicado.`);
+    return;
+  }
+  const asistencia = {
+    uuid: randomUUID(),
+    estudianteId: resultado.studentId,
+    fichaId: clase.fichaId ?? null,
+    claseId: clase.claseId ?? null,
+    instructorId: clase.instructorId ?? null,
+    timestamp,
+    metodo: "HUELLA"
+  };
+  guardarPendiente(asistencia);
+  console.log(`[engine] Asistencia guardada localmente: ${asistencia.uuid} (estudiante ${estudianteId})`);
+  notificarPendienteNuevo();
 }
 async function loginDocente(correo, password) {
   if (!correo || !password) {
@@ -1169,6 +1524,7 @@ app.whenReady().then(async () => {
   createWindow();
   broadcastStatus();
   await init();
+  iniciarScheduler();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
