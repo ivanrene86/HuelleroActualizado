@@ -147,7 +147,9 @@ PC Aula 03
 `[IMPLEMENTADO]` (2026-09-08) — `POST /api/clases/finalizar` (`DEACTIVATE`): busca la clase `Activa`, la pasa a `Finalizada` y emite `DEACTIVATE` al `deviceId` (resuelto desde el documento, no del body).
 `[IMPLEMENTADO]` (2026-09-08) — Invariante "una clase activa por dispositivo": `activar()` usa `findOneAndUpdate` atómico (upsert) + índice parcial único sobre `{deviceId, estado:'Activa'}`, con manejo del `E11000`.
 `[IMPLEMENTADO]` (2026-09-08) — Autenticación de `activar`/`finalizar`: `autenticarJWT` en ambas rutas + validación de identidad (`req.usuario.id` === `instructorId` del body) → 403 si no coincide.
-`[PENDIENTE]` — Acks `ACTIVATED`/`DEACTIVATED` y `GET /api/clases/estado` (restaurar estado al recargar el dashboard).
+`[IMPLEMENTADO]` (2026-09-08) — `GET /api/clases/estado` (restaurar estado al recargar el dashboard): `Clase.findOne({ instructorId: req.usuario.id, estado: 'Activa' }).populate('fichaId')`, protegido con `autenticarJWT`.
+`[IMPLEMENTADO]` (2026-09-08) — Eventos hacia el dashboard: `CLASS_ACTIVATED`/`CLASS_DEACTIVATED` (sala `ficha_<fichaId>`) al activar/finalizar, y `ATTENDANCE_REGISTERED` al guardar una asistencia real en `procesarAsistencia` (cubre sync online y offline).
+`[PENDIENTE]` — Acks `ACTIVATED`/`DEACTIVATED`.
 
 # Activación remota
 
@@ -301,7 +303,7 @@ Huellero → Backend:
   - `DocenteLogin.vue` — formulario de acceso docente.
   - `DocenteView.vue` — panel del docente; botón "Registrar huella" visible solo si `esLider`.
   - `EnrolarHuellaModal.vue` — modal de enrolamiento (ficha del líder + buscador de estudiantes + dedo + captura).
-- `electron.vite.config.js` — copia las DLLs de `huellero/dll/` a `out/dll/` al compilar.
+- `electron.vite.config.js` — copia las DLLs de `huellero/dll/` a `out/dll/` al compilar; fija el renderer en el puerto **5180** (`strictPort: true`) para no competir con el dashboard web (`frontend/`, puerto 5173) cuando ambos dev servers corren en paralelo.
 
 ## Fase 5 — Captura DigitalPersona `[IMPLEMENTADO]`
 
@@ -459,7 +461,7 @@ data/
 ```text
 POST /api/clases/activar            [IMPLEMENTADO] { fichaId, instructorId } (JWT + identidad; resuelve deviceId desde Ficha.dispositivoId)
 POST /api/clases/finalizar          [IMPLEMENTADO] { fichaId, instructorId } (JWT + identidad)
-GET  /api/clases/estado             [PENDIENTE]  (restaurar estado al recargar el dashboard)
+GET  /api/clases/estado             [IMPLEMENTADO]  (restaurar estado al recargar el dashboard; JWT)
 POST /api/dispositivos/registrar    [IMPLEMENTADO] { nombre? } → { deviceId, token } (hash bcryptjs; token solo en esta respuesta)
 GET  /api/dispositivos              [IMPLEMENTADO] (listado admin, con fichas asociadas)
 PUT  /api/dispositivos/:id/fichas   [IMPLEMENTADO] (admin: reemplaza el conjunto de fichas del dispositivo)
@@ -479,17 +481,17 @@ Backend → Huellero:
 Huellero → Backend:
   HELLO (deviceId + token)            [IMPLEMENTADO] (autenticado: bcryptjs.compare contra tokenHash)
   ACTIVATED / DEACTIVATED             [PENDIENTE] (acks)
-  ATTENDANCE_REGISTERED               [PENDIENTE] { fichaId, estudianteId, fecha, hora, metodo }
+  ATTENDANCE_REGISTERED               (superado: el backend emite este evento al dashboard desde el sync REST; ver Backend → Dashboard)
   ENROLL_READY / ENROLL_PROGRESS / ENROLL_COMPLETE / ENROLL_ERROR   (superados)
   SYNC_PUSH                           [PENDIENTE] { pendientes: [...] }
   PING / PONG (heartbeat)             [IMPLEMENTADO] — nativo de socket.io (pingInterval 25s / pingTimeout 20s), sin PING/PONG manual
 
 Backend → Dashboard:
-  CLASS_ACTIVATED / CLASS_DEACTIVATED { fichaId, instructorId }
-  DEVICE_CONNECTED / DEVICE_DISCONNECTED { deviceId, fichas }
-  ATTENDANCE_REGISTERED               { fichaId, estudianteId, hora, contador }
+  CLASS_ACTIVATED / CLASS_DEACTIVATED [IMPLEMENTADO] { fichaId, instructorId, iniciadaAt }
+  ATTENDANCE_REGISTERED               [IMPLEMENTADO] { fichaId, estudianteId, nombres, apellidos, hora, estado }
+  DEVICE_CONNECTED / DEVICE_DISCONNECTED [PENDIENTE] { deviceId, fichas }
   ENROLL_STARTED / ENROLL_PROGRESS / ENROLL_COMPLETED / ENROLL_FAILED
-  SYNC_COMPLETED                      { procesados }
+  SYNC_COMPLETED                      [PENDIENTE] { procesados }
 ```
 
 `[PENDIENTE]` — Mecanismo de autenticación del WebSocket del dashboard (actualmente el frontend no usa JWT; guarda `user_data` en `sessionStorage`).
@@ -568,10 +570,9 @@ El ciclo completo de toma de asistencia ya funciona de punta a punta y fue verif
 - **DEACTIVATE / `POST /api/clases/finalizar`**: implementado (2026-09-08). `claseController.finalizar()` busca la clase `Activa` (por `fichaId`+`instructorId`), la pasa a `Finalizada` (`finalizadaAt`) y emite `DEACTIVATE` vía `socketService.emitirDesactivacion()` al `deviceId` resuelto desde el documento. `[IMPLEMENTADO]`
 - **Invariante "una clase activa por dispositivo"**: implementada (2026-09-08). `claseController.activar()` usa `findOneAndUpdate` atómico (upsert) + índice parcial único en `Clase` (`{deviceId:1}`, `partialFilterExpression:{estado:'Activa'}`) + manejo del `E11000`. `[IMPLEMENTADO]`
 - **Autenticación de `activar`/`finalizar`**: implementada (2026-09-08). Ambas rutas usan `autenticarJWT` y validan que `req.usuario.id === instructorId` del body (403 si no coincide); probado en vivo (401 sin token, 403 con instructorId de otro). `[RESUELTO]`
-- **Estado visual del instructor (migración pendiente)**: en `PanelInstructor.vue`, `sesionRemotaActiva` y el feed en vivo siguen alimentados por el flujo viejo de socket (`estado_sesion`/`docente:nueva_marcacion`); el botón ya llama a `POST /api/clases/activar`/`finalizar`, pero el estado puede desincronizarse (el listener viejo lo sobrescribe al cambiar de ficha) y no se restaura al recargar. `[PENDIENTE]`
+- **Estado visual del instructor**: `[IMPLEMENTADO]` (2026-09-08). `PanelInstructor.vue` migró del flujo viejo de socket: se eliminó el listener `estado_sesion` (causaba desincronización al sobrescribir con `false`), se reemplazó `docente:nueva_marcacion` por `ATTENDANCE_REGISTERED`, y se agregaron `CLASS_ACTIVATED`/`CLASS_DEACTIVATED` + restauración vía `GET /api/clases/estado` al montar. Verificado en navegador real: sincronización en vivo entre pestañas y restauración de estado al recargar.
 - **Ventana de carrera en el anti-duplicado de asistencias**: `procesarAsistencia` usa `findOneAndUpdate` con upsert sobre `(estudianteId, fichaId, fecha)`, pero **sin un índice único real** a nivel de MongoDB sobre esos tres campos. Dos requests verdaderamente concurrentes (con uuid distintos) podrían insertar dos documentos `Asistencia` para el mismo estudiante/ficha/día. Mitigado en la práctica por: (a) el anti-duplicado de 2 min en el huellero (Map `ultimasAsistencias`, `engine.js`) que evita la mayoría de casos reales, y (b) que un solo estudiante solo puede estar frente a un lector a la vez (menor probabilidad de concurrencia real). Resolver agregando `Asistencia.index({estudianteId:1, fichaId:1, fecha:1}, {unique:true})` — requiere primero limpiar/consolidar duplicados históricos existentes en la BD, si los hay, antes de crear el índice (o Mongo rechazará crearlo). `[PENDIENTE]`
 - **Acks `ACTIVATED`/`DEACTIVATED`**: diseñados, nunca implementados. `[PENDIENTE]`
-- **`GET /api/clases/estado`** (restaurar estado al recargar el dashboard): no existe. `[PENDIENTE]`
 
 ## 3. Sincronización offline/online (Fase 10) `[IMPLEMENTADO]`
 

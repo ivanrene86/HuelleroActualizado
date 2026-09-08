@@ -49,8 +49,8 @@ HuelleroActualizado/
 
 Resumen de alto nivel de lo que queda pendiente (detalle completo y verificado en [`docs/CONTEXTO_HUELLERO.md`](./docs/CONTEXTO_HUELLERO.md)):
 
-- **Estado visual del instructor (migración pendiente)**: `sesionRemotaActiva` y el feed en vivo siguen alimentados por el flujo viejo de socket (`estado_sesion`/`docente:nueva_marcacion`); el botón ya llama al endpoint real, pero el estado puede desincronizarse y no se restaura al recargar.
-- **Acks del protocolo WebSocket** (`ACTIVATED`/`DEACTIVATED`) y `GET /api/clases/estado` para restaurar el estado real de clase al recargar el dashboard.
+- **Acks del protocolo WebSocket** (`ACTIVATED`/`DEACTIVATED`): diseñados, aún no implementados.
+- **Verificación explícita del feed en vivo** (`ATTENDANCE_REGISTERED`): ya implementado (evento emitido desde el backend al registrar asistencia real, cubre sync online y offline); falta validarlo en vivo con una marcación en curso.
 - **Índice único de asistencias** `(estudianteId, fichaId, fecha)` para cerrar la ventana de carrera de duplicados (requiere limpiar duplicados históricos primero).
 - **Empaquetado final del huellero como `.exe`** — pendiente hasta que todo funcione estable como app independiente.
 - **Vulnerabilidades de `npm audit`** en `huellero/` (1 crítica, 10 altas, 2 moderadas) en dependencias de build/empaquetado.
@@ -68,6 +68,8 @@ Para el detalle completo de cada punto y su estado (`[PENDIENTE]`, `[PARCIAL]`, 
 npm run dev
 ```
 *Iniciará simultáneamente el **Backend** (`http://localhost:3000`) y el **Frontend** (`http://localhost:5173`).*
+
+> 💡 **Nota al desarrollar en paralelo:** el dashboard web (`frontend/`) usa el puerto **5173**, y el renderer del huellero (`huellero/`) está fijado en el puerto **5180** con `strictPort: true` en `electron.vite.config.js`, para que ambos dev servers nunca compitan por el mismo puerto (independiente del orden de arranque).
 
 ---
 
