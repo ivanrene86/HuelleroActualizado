@@ -151,17 +151,31 @@ async function procesarAsistencia(item) {
   const estado = calcularEstadoAsistencia(ficha.jornada, dateObj)
 
   try {
-    await Asistencia.create({
-      uuid,
-      estudianteId,
-      fichaId,
-      fecha,
-      estado,
-      hora,
-      instructorId: instructorId || null,
-      metodo: metodo === 'MANUAL' ? 'MANUAL' : 'HUELLA',
-    })
-    return { uuid, estado: 'guardada' }
+    // Un solo registro por estudiante/ficha/día (regla de negocio): upsert atómico
+    // con $setOnInsert. Si ya existía asistencia hoy, NO se modifica nada (primer
+    // registro manda) y se reporta 'duplicada'. Distinto de Asistencia.create + uuid
+    // fresco, que creaba un documento duplicado para el mismo estudiante/día.
+    const doc = await Asistencia.findOneAndUpdate(
+      { estudianteId, fichaId, fecha },
+      {
+        $setOnInsert: {
+          uuid,
+          estudianteId,
+          fichaId,
+          fecha,
+          estado,
+          hora,
+          instructorId: instructorId || null,
+          metodo: metodo === 'MANUAL' ? 'MANUAL' : 'HUELLA',
+        },
+      },
+      { upsert: true, new: true }
+    )
+
+    if (doc && String(doc.uuid) === String(uuid)) {
+      return { uuid, estado: 'guardada' }
+    }
+    return { uuid, estado: 'duplicada' }
   } catch (err) {
     // Clave duplicada (condición de carrera): el índice único sparse de uuid lo detiene.
     if (err?.code === 11000) {
