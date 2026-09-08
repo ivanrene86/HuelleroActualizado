@@ -5,6 +5,7 @@ import Dispositivo from '../models/Dispositivo.js'
 import mongoose from 'mongoose'
 import bcryptjs from 'bcryptjs'
 import { getFichaIdList, getHoyString, calcularEstadoAsistencia } from '../services/asistenciaService.js'
+import { emitirAsistenciaRegistrada } from '../services/socketService.js'
 import {
   upsertAsistenciaSQLite,
   upsertAsistenciasBatchSQLite,
@@ -173,6 +174,14 @@ async function procesarAsistencia(item) {
     )
 
     if (doc && String(doc.uuid) === String(uuid)) {
+      emitirAsistenciaRegistrada(String(fichaId), {
+        fichaId: String(fichaId),
+        estudianteId: String(estudianteId),
+        nombres: estudiante.nombres || '',
+        apellidos: estudiante.apellidos || '',
+        hora,
+        estado,
+      })
       return { uuid, estado: 'guardada' }
     }
     return { uuid, estado: 'duplicada' }

@@ -6,5 +6,6 @@ const router = Router()
 
 router.post('/activar', autenticarJWT, claseController.activar)
 router.post('/finalizar', autenticarJWT, claseController.finalizar)
+router.get('/estado', autenticarJWT, claseController.estado)
 
 export default router

@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 import Clase from '../models/Clase.js'
 import Ficha from '../models/Ficha.js'
-import { emitirActivacion, emitirDesactivacion } from '../services/socketService.js'
+import { emitirActivacion, emitirDesactivacion, emitirClaseActivada, emitirClaseDesactivada } from '../services/socketService.js'
 
 export async function activar(req, res) {
   const { fichaId, instructorId } = req.body
@@ -51,6 +51,12 @@ export async function activar(req, res) {
       codigoFicha: ficha.codigoFicha,
     })
 
+    emitirClaseActivada(String(ficha._id), {
+      fichaId: String(ficha._id),
+      instructorId: String(instructorId),
+      iniciadaAt: clase.iniciadaAt,
+    })
+
     res.json({ success: true, clase, enviadoPorWebSocket: enviado })
   } catch (err) {
     // Carrera real (rara): el índice parcial único rechazó un segundo insert casi
@@ -92,7 +98,27 @@ export async function finalizar(req, res) {
       instructorId: String(clase.instructorId),
     })
 
+    emitirClaseDesactivada(String(clase.fichaId), {
+      fichaId: String(clase.fichaId),
+    })
+
     res.json({ success: true, clase, enviadoPorWebSocket: enviado })
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message })
+  }
+}
+
+export async function estado(req, res) {
+  try {
+    const clase = await Clase.findOne({ instructorId: req.usuario.id, estado: 'Activa' }).populate('fichaId')
+    if (!clase) {
+      return res.json({ activa: false, ficha: null, iniciadaAt: null })
+    }
+    res.json({
+      activa: true,
+      ficha: clase.fichaId || null,
+      iniciadaAt: clase.iniciadaAt,
+    })
   } catch (err) {
     res.status(500).json({ success: false, error: err.message })
   }

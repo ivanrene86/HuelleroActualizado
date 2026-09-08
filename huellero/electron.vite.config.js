@@ -32,5 +32,11 @@ export default defineConfig({
   },
   renderer: {
     plugins: [vue()],
+    // Puerto fijo y distinto al del dashboard web (5173): evita el conflicto
+    // de puerto con frontend/ cuando ambos dev servers arrancan en la misma máquina.
+    server: {
+      port: 5180,
+      strictPort: true,
+    },
   },
 })

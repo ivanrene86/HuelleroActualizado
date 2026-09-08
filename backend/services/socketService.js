@@ -178,6 +178,24 @@ export function emitirNuevaAsistencia(fichaId, data) {
   }
 }
 
+export function emitirAsistenciaRegistrada(fichaId, data) {
+  if (io && fichaId) {
+    io.to(`ficha_${String(fichaId)}`).emit('ATTENDANCE_REGISTERED', data)
+  }
+}
+
+export function emitirClaseActivada(fichaId, data) {
+  if (io && fichaId) {
+    io.to(`ficha_${String(fichaId)}`).emit('CLASS_ACTIVATED', data)
+  }
+}
+
+export function emitirClaseDesactivada(fichaId, data) {
+  if (io && fichaId) {
+    io.to(`ficha_${String(fichaId)}`).emit('CLASS_DEACTIVATED', data)
+  }
+}
+
 export function emitirActivacion(deviceId, payload) {
   if (!io || !deviceId) return false
   const socketId = dispositivosConectados.get(String(deviceId))

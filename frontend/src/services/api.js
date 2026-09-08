@@ -163,5 +163,6 @@ export default {
   clases: {
     activar(body) { return request('/clases/activar', { method: 'POST', body: JSON.stringify(body) }) },
     finalizar(body) { return request('/clases/finalizar', { method: 'POST', body: JSON.stringify(body) }) },
+    estado() { return request('/clases/estado') },
   },
 }

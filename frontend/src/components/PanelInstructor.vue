@@ -41,6 +41,7 @@ function cerrarSesion() {
 
 onMounted(async () => {
   await Promise.all([cargarMisFichas(), cargarDiasFestivos()])
+  await restaurarEstadoClase()
   setTimeout(() => initFingerprintSDK(), 500)
   iniciarSocketDocente()
 })
@@ -52,11 +53,7 @@ onUnmounted(() => {
 })
 
 function iniciarSocketDocente() {
-  socket.on('estado_sesion', ({ activa }) => {
-    sesionRemotaActiva.value = activa
-  })
-
-  socket.on('docente:nueva_marcacion', (data) => {
+  socket.on('ATTENDANCE_REGISTERED', (data) => {
     if (!data || !data.estudianteId) return
     if (asistenciaDia.value[data.estudianteId]) {
       asistenciaDia.value[data.estudianteId].estado = data.estado
@@ -73,6 +70,37 @@ function iniciarSocketDocente() {
     }
     showToast(`🖐️ ${data.nombres} ${data.apellidos} marcó ${data.estado} (${data.hora})`, data.estado === 'Tardanza' ? 'warning' : 'success')
   })
+
+  socket.on('CLASS_ACTIVATED', (data) => {
+    if (!data || !data.fichaId) return
+    if (fichaSeleccionada.value && String(fichaSeleccionada.value._id) === String(data.fichaId)) {
+      sesionRemotaActiva.value = true
+    }
+  })
+
+  socket.on('CLASS_DEACTIVATED', (data) => {
+    if (!data || !data.fichaId) return
+    if (fichaSeleccionada.value && String(fichaSeleccionada.value._id) === String(data.fichaId)) {
+      sesionRemotaActiva.value = false
+    }
+  })
+}
+
+async function restaurarEstadoClase() {
+  try {
+    const estado = await api.clases.estado()
+    if (estado?.activa && estado.ficha) {
+      const fichaActiva = misFichas.value.find(f => String(f._id) === String(estado.ficha._id))
+      if (fichaActiva) {
+        await seleccionarFicha(fichaActiva)
+      }
+      sesionRemotaActiva.value = true
+    } else {
+      sesionRemotaActiva.value = false
+    }
+  } catch (e) {
+    console.error('Error al restaurar el estado de la clase:', e)
+  }
 }
 
 async function iniciarSesionRemotaDocente() {
