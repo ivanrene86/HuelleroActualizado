@@ -1,8 +1,10 @@
 import Asistencia from '../models/Asistencia.js'
 import Estudiante from '../models/Estudiante.js'
 import Ficha from '../models/Ficha.js'
+import Dispositivo from '../models/Dispositivo.js'
 import mongoose from 'mongoose'
-import { getFichaIdList, getHoyString } from '../services/asistenciaService.js'
+import bcryptjs from 'bcryptjs'
+import { getFichaIdList, getHoyString, calcularEstadoAsistencia } from '../services/asistenciaService.js'
 import {
   upsertAsistenciaSQLite,
   upsertAsistenciasBatchSQLite,
@@ -100,6 +102,106 @@ export async function createAsistencia(req, res) {
     }
 
     res.status(201).json(asistencia)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+// Procesa una única asistencia del batch de sincronización. Devuelve el resultado
+// { uuid, estado: 'guardada'|'duplicada'|'error', error? } sin lanzar excepciones,
+// para que un fallo individual no tumbe el resto del batch.
+async function procesarAsistencia(item) {
+  const { uuid, estudianteId, fichaId, instructorId, timestamp, metodo } = item || {}
+
+  if (!uuid) {
+    return { uuid: uuid || null, estado: 'error', error: 'uuid es requerido' }
+  }
+  if (!estudianteId || !fichaId) {
+    return { uuid, estado: 'error', error: 'estudianteId y fichaId son requeridos' }
+  }
+
+  // Idempotencia a nivel de aplicación: si el uuid ya existe, es un reenvío.
+  const existente = await Asistencia.findOne({ uuid }).catch(() => null)
+  if (existente) {
+    return { uuid, estado: 'duplicada' }
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(String(estudianteId)) || !mongoose.Types.ObjectId.isValid(String(fichaId))) {
+    return { uuid, estado: 'error', error: 'estudianteId o fichaId inválidos' }
+  }
+
+  const [estudiante, ficha] = await Promise.all([
+    Estudiante.findById(estudianteId).catch(() => null),
+    Ficha.findById(fichaId).catch(() => null),
+  ])
+  if (!estudiante) {
+    return { uuid, estado: 'error', error: 'Estudiante no encontrado' }
+  }
+  if (!ficha) {
+    return { uuid, estado: 'error', error: 'Ficha no encontrada' }
+  }
+
+  const dateObj = timestamp ? new Date(timestamp) : new Date()
+  if (Number.isNaN(dateObj.getTime())) {
+    return { uuid, estado: 'error', error: 'timestamp inválido' }
+  }
+  const offsetMs = dateObj.getTimezoneOffset() * 60000
+  const fecha = new Date(dateObj.getTime() - offsetMs).toISOString().split('T')[0]
+  const hora = dateObj.toTimeString().slice(0, 8)
+  const estado = calcularEstadoAsistencia(ficha.jornada, dateObj)
+
+  try {
+    await Asistencia.create({
+      uuid,
+      estudianteId,
+      fichaId,
+      fecha,
+      estado,
+      hora,
+      instructorId: instructorId || null,
+      metodo: metodo === 'MANUAL' ? 'MANUAL' : 'HUELLA',
+    })
+    return { uuid, estado: 'guardada' }
+  } catch (err) {
+    // Clave duplicada (condición de carrera): el índice único sparse de uuid lo detiene.
+    if (err?.code === 11000) {
+      return { uuid, estado: 'duplicada' }
+    }
+    return { uuid, estado: 'error', error: err.message }
+  }
+}
+
+export async function syncAsistencias(req, res) {
+  try {
+    const { deviceId, token, asistencias } = req.body
+
+    // Validación de dispositivo (mismo patrón que el HELLO del WebSocket):
+    // deviceId + token, comparando contra tokenHash con bcryptjs.
+    if (!deviceId || !token) {
+      return res.status(401).json({ error: 'deviceId y token son requeridos' })
+    }
+    const dispositivo = await Dispositivo.findOne({ deviceId: String(deviceId) })
+    if (!dispositivo) {
+      return res.status(401).json({ error: 'Dispositivo no registrado' })
+    }
+    if (dispositivo.activo !== true) {
+      return res.status(403).json({ error: 'Dispositivo inactivo' })
+    }
+    const tokenValido = await bcryptjs.compare(String(token), dispositivo.tokenHash)
+    if (!tokenValido) {
+      return res.status(401).json({ error: 'Token de dispositivo inválido' })
+    }
+
+    if (!Array.isArray(asistencias)) {
+      return res.status(400).json({ error: 'asistencias debe ser un array' })
+    }
+
+    const resultados = []
+    for (const item of asistencias) {
+      resultados.push(await procesarAsistencia(item))
+    }
+
+    res.json({ ok: true, resultados })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

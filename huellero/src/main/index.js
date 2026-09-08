@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import * as engine from './engine.js'
+import { iniciarScheduler } from './scheduler.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -61,6 +62,7 @@ app.whenReady().then(async () => {
   createWindow()
   broadcastStatus()
   await engine.init()
+  iniciarScheduler()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

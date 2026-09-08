@@ -290,7 +290,7 @@ Huellero → Backend:
   - `index.js` — arranque de Electron, `BrowserWindow`, registro de manejadores IPC (`huellero:getStatus`, `huellero:capture`, `huellero:login`, `huellero:logout`, `huellero:getFichaLider`, `huellero:getEstudiantesFicha`, `huellero:enrolar`).
   - `engine.js` — orquestador: `init()`, `getStatus()`, `capturarYVerificar()`, `loginDocente()`, `logoutDocente()`, `getFichaLider()`, `getEstudiantesFicha()`, `enrolarEstudiante()`, `guardarTemplate()`.
   - `config.js` — lee `config.json` (`deviceId`, `token`, `backendUrl`, `wsUrl`).
-  - `capture.js` — captura DigitalPersona real (Fase 5, implementada). `store.js`, `sync.js` — stubs (ver sección "Pendiente"). `ws-client.js` — conecta por socket.io (`HELLO`, escucha `ACTIVATE` → `store.setClaseActiva`).
+  - `capture.js` — captura DigitalPersona real (Fase 5). `store.js` — persistencia local `data/*.json`. `sync.js` — sincronización idempotente (Fase 10). `scheduler.js` — disparo 00:00 + polling. `ws-client.js` — socket.io singleton (HELLO, ACTIVATE/DEACTIVATE, reconexión).
 - **Preload** (`src/preload/index.js`): expone `window.huellero` vía `contextBridge` (`getStatus`, `capturarYVerificar`, `loginDocente`, `logoutDocente`, `getFichaLider`, `getEstudiantesFicha`, `enrolarEstudiante`, `onStatus`).
 - **Renderer** (`src/renderer/src/`):
   - `App.vue` — cambia entre vistas `kiosko`, `login` y `docente`.
@@ -351,13 +351,12 @@ Captura real funcionando contra el lector físico **U.are.U 4500** mediante `hue
 - `backend/services/socketService.js`: el `HELLO` ahora exige `{ deviceId, token }`; busca el `Dispositivo`, valida `activo`, y compara con `bcryptjs.compare(token, tokenHash)`. Rechaza (desconecta + `console.log` para auditoría) si faltan campos, no existe, está inactivo o el token no coincide.
 - `huellero/src/main/ws-client.js`: emite `HELLO { deviceId, token }` y solo conecta si hay ambos.
 
-## Pendiente (stubs) `[PARCIAL]` / `[PENDIENTE]`
+## Pendiente `[PENDIENTE]`
 
-- `ws-client.js` (Fase 6): HELLO autenticado, recibe `ACTIVATE` y reconecta automáticamente (backoff 2s→30s) re-autenticando con `HELLO`; **sin DEACTIVATE ni acks**.
-- `sync.js` (Fase 10): **sincronización no implementada**.
+- `ws-client.js` (Fase 6): HELLO autenticado, reconexión backoff 2s→60s; ya escucha `DEACTIVATE`, pero el backend **aún no envía** `DEACTIVATE` ni existen los acks. `[PARCIAL]`
 - `npm audit` (huellero/): **13 vulnerabilidades** — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). `[PENDIENTE]` — sin prisa pero sin olvidarlo; la corrección requiere `npm audit fix --force` con cambios breaking (electron@44, electron-builder@26).
 
-Consecuencia: la captura y el enrolamiento ya funcionan; `capturarYVerificar()` aún no identifica a nadie porque `getPlantillasFicha()` devuelve `[]` (plantillas todavía sin cachear).
+Consecuencia: captura, enrolamiento y sincronización ya funcionan; lo único que falta para identificar en el kiosko es cachear las plantillas (`getPlantillasFicha()` devuelve `[]`).
 
 # Estructura actual de huellero
 
@@ -375,8 +374,9 @@ huellero/
     │   ├── config.js        # config.json (deviceId, token, backendUrl, wsUrl) — persistencia + reintento
     │   ├── capture.js       # captura DigitalPersona real (Fase 5, implementada)
     │   ├── store.js         # persistencia data/*.json (Fase 4)
-    │   ├── sync.js          # stub — sincronización (Fase 10)
-    │   └── ws-client.js     # socket.io + HELLO autenticado (Fase 6, parcial)
+    │   ├── sync.js          # sincronización idempotente de pendientes (Fase 10)
+    │   ├── scheduler.js     # disparo 00:00 + polling 5min + reconexión/nuevo pendiente
+    │   └── ws-client.js     # socket.io singleton (HELLO, ACTIVATE/DEACTIVATE, reconexión 2s→60s)
     ├── preload/
     │   └── index.js         # contextBridge → window.huellero
     └── renderer/
@@ -461,7 +461,7 @@ POST /api/dispositivos/registrar    [IMPLEMENTADO] { nombre? } → { deviceId, t
 GET  /api/dispositivos              [PENDIENTE]  (listado admin)
 PUT  /api/dispositivos/:id/fichas   [PENDIENTE]  (admin: agregar/quitar fichas)
 GET  /api/fichas/:id/plantillas     [PENDIENTE]  (plantillas de la ficha, para caché local)
-POST /api/asistencias/sync          [PENDIENTE]  (sincronización idempotente)
+POST /api/asistencias/sync          [IMPLEMENTADO] { deviceId, token, asistencias:[{uuid,...}] } (idempotente por uuid)
 POST /api/enrolamiento/guardar      [IMPLEMENTADO] { estudianteId, fichaId, dedo, template }
 ```
 
@@ -511,7 +511,7 @@ Backend → Dashboard:
 | 7 | Activación/desactivación remota | `[PENDIENTE]` |
 | 8 | Enrolamiento remoto | `[PENDIENTE]` |
 | 9 | Registro de asistencias | `[PENDIENTE]` |
-| 10 | Sincronización offline/online | `[PENDIENTE]` — `sync.js` es stub |
+| 10 | Sincronización offline/online | ✅ Implementada — `sync.js` + `POST /api/asistencias/sync` + `scheduler.js` (00:00 + polling 5 min) |
 | 11 | Pruebas de recuperación y duplicados | `[PENDIENTE]` |
 | 12 | Empaquetado `.exe` | `[PENDIENTE]` |
 
@@ -548,21 +548,21 @@ Cualquier IA (o persona) que continúe trabajando en este proyecto debe:
 # ROADMAP — Próximos pasos y pendientes
 
 > Consolidado de **todo lo que falta** para completar la app del huellero, en un solo lugar.
-> Estados verificados contra el código el **2026-09-07** (no asumidos).
+> Estados verificados contra el código el **2026-09-08** (re-verificados para esta consolidación; no asumidos).
 
-## 1. Bloqueante crítico: el registro de asistencia real `[PENDIENTE]`
+**Avance reciente (2026-09-07):** ya están implementados — (1) guardado local de asistencia al identificar (`capturarYVerificar` → `guardarPendiente` con `uuid` + anti-duplicado 2 min), (2) `POST /api/asistencias/sync` (idempotente por `uuid`, auth `deviceId`+`token`), (3) `sync.js` (sube pendientes y limpia los confirmados), y (4) `scheduler.js` (medianoche + polling 5 min + intento al reconectar/nuevo pendiente). El **único bloqueante restante** para cerrar la toma de asistencia es el endpoint de plantillas + su cacheo local (categoría 1). También quedaron resueltos durante la implementación el campo `metodo` en `Asistencia` y el hasheo bcrypt de contraseñas de Admin/Instructor (ver categoría 5).
 
-El enrolamiento ya funciona de punta a punta, pero **tomar asistencia** (estudiante coloca el dedo durante una clase activa → se identifica → se registra la asistencia) sigue incompleto. Estado verificado:
+## 1. Bloqueante crítico: el registro de asistencia real `[PARCIAL]`
 
-- `store.getPlantillasFicha()` (`huellero/src/main/store.js:72`) **siempre devuelve `[]`**: el objeto `plantillas` se carga vacío en `init()` y **no existe ningún setter** que lo llene.
+El enrolamiento y la **persistencia de la asistencia** (guardado local + sincronización) ya están implementados. Lo que **todavía falta** es la **identificación**, porque no hay plantillas cacheadas. Estado:
+
+- `store.getPlantillasFicha()` (`huellero/src/main/store.js:72`) **siempre devuelve `[]`**: el objeto `plantillas` se carga vacío en `init()` y **no existe ningún setter** que lo llene. → **Este es el bloqueante.**
 - **No existe** `GET /api/fichas/:id/plantillas` en `backend/routes/fichas.js` ni en `backend/controllers/fichaController.js`.
-- `engine.capturarYVerificar()` (`huellero/src/main/engine.js:47`) captura e identifica, pero con plantillas vacías `verifyFingerprint` devuelve "No hay estudiantes enrolados para comparar"; además **nunca persiste** la asistencia (el kiosko muestra "Asistencia registrada" solo en la UI).
-- `POST /api/asistencias` **sí existe** (`backend/routes/asistencias.js:10`, `createAsistencia` con `findOneAndUpdate`/upsert) — falta que el huellero lo invoque.
+- `engine.capturarYVerificar()` ya captura, identifica, y al haber match **guarda localmente** la asistencia (`uuid`, anti-duplicado 2 min, `metodo:'HUELLA'`) vía `store.guardarPendiente()`; `sync.js`/`scheduler.js` la suben vía `POST /api/asistencias/sync` (idempotente). Con plantillas vacías, `verifyFingerprint` devuelve "No hay estudiantes enrolados para comparar", por lo que **nunca hay match**.
 
-Para cerrar el ciclo falta:
+Falta para cerrar el ciclo:
 1. `GET /api/fichas/:id/plantillas` en backend (devolver los `huellaTemplate` de los estudiantes enrolados de esa ficha).
 2. Descargar y cachear plantillas en el huellero (nuevo setter en `store.js`, p. ej. `guardarPlantillasFicha()`), disparado al recibir `ACTIVATE` (y re-descarga al reconectar/HELLO).
-3. Registrar la asistencia tras identificar: online vía `POST /api/asistencias` (con `metodo:'HUELLA'`) o, sin conexión, `store.guardarPendiente()` con UUID para sincronizar después.
 
 ## 2. Robustez del ciclo de clases activas `[PARCIAL]`
 
@@ -571,12 +571,14 @@ Para cerrar el ciclo falta:
 - **Acks `ACTIVATED`/`DEACTIVATED`**: diseñados, nunca implementados. `[PENDIENTE]`
 - **`GET /api/clases/estado`** (restaurar estado al recargar el dashboard): no existe. `[PENDIENTE]`
 
-## 3. Sincronización offline/online (Fase 10) `[PENDIENTE]`
+## 3. Sincronización offline/online (Fase 10) `[IMPLEMENTADO]`
 
-- `huellero/src/main/sync.js` sigue siendo stub.
-- No existe cron/intervalo de las 12:00 AM (ni en `sync.js` ni en `backend/index.js`).
-- Mecanismo de backoff para reintentos: **sin decidir** (fijo vs exponencial).
-- `POST /api/asistencias/sync` (idempotente por UUID): no existe en `backend/routes/asistencias.js`.
+- `huellero/src/main/sync.js`: sincroniza contra `POST /api/asistencias/sync`, idempotente por `uuid`, y elimina de la cola local solo lo confirmado (`guardada`/`duplicada`). `[IMPLEMENTADO]`
+- `huellero/src/main/scheduler.js`: disparo obligatorio a las 00:00 + polling cada 5 min (mientras haya pendientes) + intento inmediato al reconectar/guardar nuevo pendiente. `[IMPLEMENTADO]`
+- Mecanismo de reintentos (sync): **decidido** — polling fijo de 5 min para el backlog offline (no tiempo real). `[DECIDIDO]`
+- Backoff de **reconexión WebSocket** (`huellero/src/main/ws-client.js`): exponencial 2s→60s (`reconnectionDelay`/`reconnectionDelayMax`), distinto del polling de sync. `[IMPLEMENTADO]`
+- `POST /api/asistencias/sync`: implementado (auth `deviceId`+`token`, idempotente por `uuid`, resultados por ítem). `[IMPLEMENTADO]`
+- **Fase 11 (pruebas de recuperación y duplicados)**: aún `[PENDIENTE]` — el código de sync e idempotencia está, pero no se han ejecutado pruebas formales de recuperación tras caída ni de duplicados masivos.
 
 ## 4. Administración: asociación dispositivo↔ficha `[PENDIENTE]`
 
@@ -588,9 +590,11 @@ Para cerrar el ciclo falta:
 
 - **npm audit (`huellero/`)**: 13 vulnerabilidades — 1 crítica, 10 altas, 2 moderadas — en dependencias de build/empaquetado (`tar` crítica vía electron-builder; `vite`/`esbuild`/`electron`/`extract-zip` altas). Requiere `npm audit fix --force` con breaking (electron@44, electron-builder@26). `[PENDIENTE]`
 - **Migrar `dpfpdd_capture` (síncrona) → `dpfpdd_capture_async`**: opcional. El bloqueo de 10s se confirmó tolerable (no rompe el WS), pero sigue siendo mejora de UX. `[PENDIENTE]`
-- **Contraseñas en texto plano de Admin/Instructor**: **mayormente resuelto** (verificado 2026-09-07). El Admin por defecto se crea con bcrypt y hay auto-migración texto plano→bcrypt en `backend/index.js:81-97`; los controllers de Instructor hashean. Matiz residual: el modelo `Instructor` (`backend/models/Instructor.js:11`) declara `password: { default: 'sena2026' }` en claro, latente solo si se usa el modelo fuera de los controllers. `[RESUELTO con matiz]`
-- **Campo `metodo: 'HUELLA' | 'MANUAL'`** en `Asistencia`: no existe (`backend/models/Asistencia.js`). Requerido para auditoría y para el registro biométrico (categoría 1). `[PENDIENTE]`
+- **Contraseñas en texto plano de Admin/Instructor**: **mayormente resuelto** (verificado 2026-09-07, re-verificado 2026-09-08). El Admin por defecto se crea con bcrypt y hay auto-migración texto plano→bcrypt en `backend/index.js:81-97`; los controllers de Instructor hashean. Detalle de la auto-migración (`backend/index.js:92`): solo chequea `$2a$`/`$2b$` (no `$2y$`, que de todas formas es imposible con `bcryptjs`), y **solo migra al Admin por defecto en el arranque**; los Instructores se migran de forma perezosa en su propio login vía `verifyAndUpgradePassword` (`passwordService.js`). Matiz residual: el modelo `Instructor` (`backend/models/Instructor.js:11`) declara `password: { default: 'sena2026' }` en claro, latente solo si se usa el modelo fuera de los controllers (hoy nunca dispara: los dos puntos de creación siempre fijan password hasheado). `[RESUELTO con matiz]`
+- **Campo `metodo: 'HUELLA' | 'MANUAL'`** en `Asistencia`: **agregado** (junto con `uuid` único sparse, al implementar `POST /api/asistencias/sync`). `[IMPLEMENTADO]`
+- **Idempotencia de `Asistencia.uuid`** `[VERIFICADO 2026-09-08]`: garantizada por índice único real en MongoDB (`unique: true, sparse: true`, `Asistencia.js:13`) + catch del error `E11000` en el sync (`asistenciaController.js:165-168`), no solo por el `findOne` previo (que es únicamente una optimización). Única salvedad a vigilar: si algún entorno tuviera `autoIndex: false` o el índice no llegó a crearse en una colección preexistente, la garantía se perdería — no es el caso hoy, pero vale la pena confirmar el índice si se detectan asistencias duplicadas alguna vez en producción.
 - **Autenticación del WebSocket del dashboard**: el REST del dashboard **sí usa JWT** (`frontend/src/services/api.js` inyecta `auth_token` desde `sessionStorage`), pero el **WebSocket del dashboard** (`frontend/src/services/socket.js`) se conecta **sin autenticación** (a diferencia del HELLO autenticado del huellero). `[PENDIENTE]`
+- **Config centralizado de `BIOMETRIC_MATCH_THRESHOLD` en el huellero**: hoy el huellero lee el umbral de una variable de entorno del SO (fallback `21474` en `fingerprint.js`), mientras el backend lo toma de `.env`; si se cambia en un lado y no en el otro, la verificación queda con umbrales distintos sin error visible. Sugerido leerlo desde `config.json` (mismo mecanismo que `deviceId`/`token`/`backendUrl`/`wsUrl`). `[PENDIENTE]`
 - **Flujo Web SDK del navegador** (si llega a reactivarse): verificar su propio mismatch de DPI (no investigado). `[PENDIENTE]`
 
 ## 6. Empaquetado final `[PENDIENTE]`

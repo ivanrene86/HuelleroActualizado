@@ -1,8 +1,10 @@
+import { randomUUID } from 'crypto'
 import { getConfig, iniciarRegistroDispositivo, tieneIdentidad } from './config.js'
 import * as store from './store.js'
-import * as ws from './ws-client.js'
+import wsClient from './ws-client.js'
 import { capturarHuella, inicializarCaptura } from './capture.js'
 import { syncPendientes } from './sync.js'
+import { notificarPendienteNuevo } from './scheduler.js'
 import { identificarEstudiante } from '../verify.js'
 import * as fingerprint from '../fingerprint.js'
 
@@ -35,18 +37,31 @@ function notificarProgresoEnrolamiento(payload) {
 export async function init() {
   await store.init()
   inicializarCaptura()
-  ws.setOnStatusChange(notificarEstado)
-  ws.connect(getConfig())
+  wsClient.onConnectionChange(notificarEstado)
+  wsClient.onActivate((payload) => {
+    store.setClaseActiva({
+      fichaId: payload?.fichaId ?? null,
+      instructorId: payload?.instructorId ?? null,
+      claseId: payload?.claseId ?? null,
+      estado: 'Activa',
+    })
+    notificarEstado()
+  })
+  wsClient.onDeactivate(() => {
+    store.setClaseActiva(null)
+    notificarEstado()
+  })
+  wsClient.connect(getConfig())
   syncPendientes()
   iniciarRegistroDispositivo(() => {
-    ws.connect(getConfig())
+    wsClient.connect(getConfig())
     notificarEstado()
   })
 }
 
 export function getStatus() {
   return {
-    online: ws.getConnectionStatus(),
+    online: wsClient.isConnected(),
     claseActiva: store.getClaseActiva() || null,
     dispositivoRegistrado: tieneIdentidad(),
     docente: docente
@@ -69,16 +84,73 @@ export async function capturarYVerificar() {
 
   let imagen
   let dpi
+  let capturaTimestamp
   try {
     const captura = await capturarHuella()
     imagen = captura.imagen
     dpi = captura.dpi
+    // Momento real de la captura (no del guardado posterior).
+    capturaTimestamp = Date.now()
   } catch (err) {
     return { ok: false, error: err.message }
   }
 
   const plantillas = await store.getPlantillasFicha(clase.fichaId)
-  return identificarEstudiante(imagen, plantillas, dpi)
+  const resultado = identificarEstudiante(imagen, plantillas, dpi)
+
+  // Si identificó a un estudiante, persistir la asistencia localmente (offline-ready).
+  if (resultado.match && resultado.studentId) {
+    try {
+      registrarAsistenciaLocal(clase, resultado, capturaTimestamp)
+    } catch (err) {
+      // Un fallo de guardado no debe ocultar el resultado de identificación.
+      console.error('[engine] No se pudo guardar la asistencia pendiente:', err.message)
+    }
+  }
+
+  return resultado
+}
+
+// Ventana anti-duplicado: evita registrar dos veces al mismo estudiante en la
+// misma clase en un lapso corto (p. ej. el estudiante coloca el dedo dos veces).
+const VENTANA_DEDUP_MS = 2 * 60 * 1000
+
+function registrarAsistenciaLocal(clase, resultado, timestamp) {
+  const estudianteId = String(resultado.studentId)
+  // La clase se identifica por claseId; si aún no llega (backend no lo envía), por fichaId.
+  const claveClase = clase.claseId != null ? String(clase.claseId) : String(clase.fichaId)
+
+  const pendientes = store.getPendientes()
+  const yaMarcado = pendientes.some((p) => {
+    const pClaveClase = p.claseId != null ? String(p.claseId) : String(p.fichaId)
+    return (
+      String(p.estudianteId) === estudianteId &&
+      pClaveClase === claveClase &&
+      p.timestamp != null &&
+      timestamp - p.timestamp <= VENTANA_DEDUP_MS
+    )
+  })
+
+  if (yaMarcado) {
+    console.log(`[engine] Asistencia ya registrada para ${estudianteId} en esta clase; se omite duplicado.`)
+    return
+  }
+
+  const asistencia = {
+    uuid: randomUUID(),
+    estudianteId: resultado.studentId,
+    fichaId: clase.fichaId ?? null,
+    claseId: clase.claseId ?? null,
+    instructorId: clase.instructorId ?? null,
+    timestamp,
+    metodo: 'HUELLA',
+  }
+
+  store.guardarPendiente(asistencia)
+  console.log(`[engine] Asistencia guardada localmente: ${asistencia.uuid} (estudiante ${estudianteId})`)
+
+  // Avisa al scheduler para intentar sincronizar pronto (sin esperar al polling).
+  notificarPendienteNuevo()
 }
 
 export async function loginDocente(correo, password) {

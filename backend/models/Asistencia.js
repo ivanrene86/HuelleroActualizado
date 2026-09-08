@@ -10,6 +10,8 @@ const asistenciaSchema = new mongoose.Schema({
   tiempoTardanza: { type: String, default: '0 horas' },
   motivoInhabilitacion: { type: String, default: '' },
   instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Instructor' },
+  uuid: { type: String, index: { unique: true, sparse: true } },
+  metodo: { type: String, enum: ['HUELLA', 'MANUAL'], default: 'HUELLA' },
 }, { timestamps: true, collection: 'asistencias' })
 
 export default mongoose.model('Asistencia', asistenciaSchema)

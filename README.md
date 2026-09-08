@@ -1,6 +1,6 @@
 # 🎓 Sistema de Asistencia Biométrica SENA (DigitalPersona U.are.U 4500)
 
-Sistema integral modular para el control, registro y reporte de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500, WebSockets en tiempo real y soporte para Modo Kiosco Autónomo de Aula.
+Sistema integral modular para el control, registro y reporte de asistencia de aprendices e instructores mediante biometría dactilar con hardware DigitalPersona U.are.U 4500, WebSockets en tiempo real y soporte para Modo Kiosco Autónomo de Aula. Incluye además una aplicación local de escritorio (Electron) para el huellero físico, actualmente en migración desde el flujo original basado en navegador.
 
 ---
 
@@ -28,6 +28,15 @@ HuelleroActualizado/
 │   ├── public/                    # 📄 Scripts cliente del SDK DigitalPersona
 │   └── package.json
 │
+├── huellero/                      # 🖐️ Aplicación local Electron (Node + Vue 3) — 
+│                                  #    conecta el lector físico DigitalPersona U.are.U 4500
+│   ├── src/main/                  # ⚙️ Proceso principal: captura, WebSocket, sesión docente
+│   ├── src/renderer/              # 🖼️ UI del kiosko (Vue 3): login docente, enrolamiento
+│   ├── dll/                       # 🔌 Librerías nativas DigitalPersona (mismo set que backend/dll)
+│   └── package.json
+│
+├── docs/                          # 📚 Documentación técnica del proyecto 
+│                                  #    (CONTEXTO_HUELLERO.md: contexto y roadmap del huellero)
 ├── package.json                   # ⚡ Control del monorepo con un solo comando
 ├── setup_servicios_huella.bat     # 🛠️ Configurador automático de servicios de huella
 └── setup_huellas.bat              # 📦 Instalador y verificador de dependencias
@@ -51,6 +60,7 @@ npm run dev
 - `npm run dev:backend`: Inicia solo el servidor API.
 - `npm run build:frontend`: Compila el Frontend para producción.
 - `npm run install:all`: Instala todas las dependencias del proyecto.
+- `cd huellero && npm run dev`: Levanta la aplicación local Electron del huellero físico.
 
 ---
 
