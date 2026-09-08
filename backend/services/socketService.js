@@ -176,3 +176,11 @@ export function emitirActivacion(deviceId, payload) {
   io.to(socketId).emit('ACTIVATE', payload)
   return true
 }
+
+export function emitirDesactivacion(deviceId, payload) {
+  if (!io || !deviceId) return false
+  const socketId = dispositivosConectados.get(String(deviceId))
+  if (!socketId) return false
+  io.to(socketId).emit('DEACTIVATE', payload)
+  return true
+}

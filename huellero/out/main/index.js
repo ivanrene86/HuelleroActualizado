@@ -1094,6 +1094,7 @@ let enrolamientoCancelado = false;
 let plantillasRetryTimer = null;
 let plantillasFichaActual = null;
 let descargandoPlantillas = false;
+const ultimasAsistencias = /* @__PURE__ */ new Map();
 function setOnEstadoChange(cb) {
   onEstadoChange = cb;
 }
@@ -1237,11 +1238,13 @@ async function capturarYVerificar() {
   }
   const resultado = identificarEstudiante(imagen, plantillas2, dpi);
   if (resultado.match && resultado.studentId) {
+    let duplicado = false;
     try {
-      registrarAsistenciaLocal(clase, resultado, capturaTimestamp);
+      duplicado = registrarAsistenciaLocal(clase, resultado, capturaTimestamp);
     } catch (err) {
       console.error("[engine] No se pudo guardar la asistencia pendiente:", err.message);
     }
+    resultado.duplicado = duplicado;
   }
   return resultado;
 }
@@ -1249,14 +1252,17 @@ const VENTANA_DEDUP_MS = 2 * 60 * 1e3;
 function registrarAsistenciaLocal(clase, resultado, timestamp) {
   const estudianteId = String(resultado.studentId);
   const claveClase = clase.claseId != null ? String(clase.claseId) : String(clase.fichaId);
+  const claveEstudiante = `${claveClase}:${estudianteId}`;
   const pendientes2 = getPendientes();
-  const yaMarcado = pendientes2.some((p) => {
+  const yaMarcadoPendiente = pendientes2.some((p) => {
     const pClaveClase = p.claseId != null ? String(p.claseId) : String(p.fichaId);
     return String(p.estudianteId) === estudianteId && pClaveClase === claveClase && p.timestamp != null && timestamp - p.timestamp <= VENTANA_DEDUP_MS;
   });
-  if (yaMarcado) {
+  const ultimo = ultimasAsistencias.get(claveEstudiante);
+  const yaMarcadoReciente = ultimo != null && timestamp - ultimo <= VENTANA_DEDUP_MS;
+  if (yaMarcadoPendiente || yaMarcadoReciente) {
     console.log(`[engine] Asistencia ya registrada para ${estudianteId} en esta clase; se omite duplicado.`);
-    return;
+    return true;
   }
   const asistencia = {
     uuid: randomUUID(),
@@ -1268,8 +1274,10 @@ function registrarAsistenciaLocal(clase, resultado, timestamp) {
     metodo: "HUELLA"
   };
   guardarPendiente(asistencia);
+  ultimasAsistencias.set(claveEstudiante, timestamp);
   console.log(`[engine] Asistencia guardada localmente: ${asistencia.uuid} (estudiante ${estudianteId})`);
   notificarPendienteNuevo();
+  return false;
 }
 async function loginDocente(correo, password) {
   if (!correo || !password) {

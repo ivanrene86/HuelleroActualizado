@@ -4,5 +4,6 @@ import * as claseController from '../controllers/claseController.js'
 const router = Router()
 
 router.post('/activar', claseController.activar)
+router.post('/finalizar', claseController.finalizar)
 
 export default router

@@ -74,8 +74,8 @@ async function leerHuella() {
       <span class="pill" :class="online ? 'ok' : 'off'">
         {{ online ? 'En línea' : 'Sin conexión' }}
       </span>
-      <span class="pill" :class="claseActiva ? 'ok' : 'warn'">
-        {{ claseActiva ? `Clase activa · Ficha ${claseActiva.fichaId}` : 'Sin clase activa' }}
+      <span v-if="claseActiva" class="pill ok">
+        Clase activa · Ficha {{ claseActiva.fichaId }}
       </span>
       <span v-if="!dispositivoRegistrado" class="pill info">
         Equipo no identificado. Reintentando conexión…
@@ -85,9 +85,9 @@ async function leerHuella() {
     <main class="lector">
       <div class="fingerprint-icon" :class="{ pulse: estado === 'leyendo' }">☝</div>
       <h1>{{ claseActiva ? 'Coloca tu dedo para marcar asistencia' : 'No hay clase activa' }}</h1>
-      <p class="hint">Apoya el dedo en el lector DigitalPersona</p>
+      <p v-if="claseActiva" class="hint">Apoya el dedo en el lector DigitalPersona</p>
 
-      <button class="primary leer" :disabled="estado === 'leyendo'" @click="leerHuella">
+      <button class="primary leer" :disabled="estado === 'leyendo' || !claseActiva" @click="leerHuella">
         {{ estado === 'leyendo' ? 'Leyendo…' : 'Leer huella' }}
       </button>
 
