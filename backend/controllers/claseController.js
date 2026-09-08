@@ -9,6 +9,11 @@ export async function activar(req, res) {
     return res.status(400).json({ success: false, error: 'fichaId e instructorId son requeridos' })
   }
 
+  // El instructor solo puede activar clases a su nombre (identidad del JWT).
+  if (String(req.usuario?.id) !== String(instructorId)) {
+    return res.status(403).json({ success: false, error: 'No puedes activar una clase a nombre de otro instructor' })
+  }
+
   try {
     // Resuelve el deviceId desde la asociación ficha→dispositivo (Ficha.dispositivoId).
     // Ya no se recibe deviceId en el body (asociación dispositivo↔ficha implementada).
@@ -64,6 +69,11 @@ export async function finalizar(req, res) {
   const { fichaId, instructorId } = req.body
   if (!fichaId || !instructorId) {
     return res.status(400).json({ success: false, error: 'fichaId e instructorId son requeridos' })
+  }
+
+  // El instructor solo puede finalizar clases a su nombre (identidad del JWT).
+  if (String(req.usuario?.id) !== String(instructorId)) {
+    return res.status(403).json({ success: false, error: 'No puedes finalizar una clase a nombre de otro instructor' })
   }
 
   try {

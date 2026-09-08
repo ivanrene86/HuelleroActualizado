@@ -154,4 +154,14 @@ export default {
     update(id, body) { return request(`/dias-festivos/${id}`, { method: 'PUT', body: JSON.stringify(body) }) },
     delete(id) { return request(`/dias-festivos/${id}`, { method: 'DELETE' }) },
   },
+
+  dispositivos: {
+    listar() { return request('/dispositivos') },
+    asociarFichas(id, fichaIds) { return request(`/dispositivos/${id}/fichas`, { method: 'PUT', body: JSON.stringify({ fichaIds }) }) },
+  },
+
+  clases: {
+    activar(body) { return request('/clases/activar', { method: 'POST', body: JSON.stringify(body) }) },
+    finalizar(body) { return request('/clases/finalizar', { method: 'POST', body: JSON.stringify(body) }) },
+  },
 }

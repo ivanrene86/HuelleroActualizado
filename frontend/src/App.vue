@@ -8,6 +8,7 @@ import ImportarUsuarios from './components/ImportarUsuarios.vue'
 import Dashboard from './components/Dashboard.vue'
 import Reportes from './components/Reportes.vue'
 import DiasFestivos from './components/DiasFestivos.vue'
+import PanelDispositivos from './components/PanelDispositivos.vue'
 import PanelInstructor from './components/PanelInstructor.vue'
 import PanelEstudiante from './components/PanelEstudiante.vue'
 import Login from './components/Login.vue'
@@ -34,6 +35,7 @@ const views = {
   instructores: { component: Instructores, label: 'Instructores', roles: ['Administrador'] },
   estudiantes: { component: Estudiantes, label: 'Estudiantes', roles: ['Administrador', 'Instructor'] },
   fichas: { component: Fichas, label: 'Fichas', roles: ['Administrador'] },
+  dispositivos: { component: PanelDispositivos, label: 'Dispositivos', roles: ['Administrador'] },
   importar: { component: ImportarUsuarios, label: 'Importar / Carga Masiva', roles: ['Administrador', 'Instructor'] },
   reportes: { component: Reportes, label: 'Reportes', roles: ['Administrador', 'Instructor'] },
   diasFestivos: { component: DiasFestivos, label: 'Días Inhabilitados', roles: ['Administrador'] },
@@ -314,6 +316,12 @@ onUnmounted(() => {
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
             <line x1="3" y1="9" x2="21" y2="9"/>
             <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          <svg v-if="key === 'dispositivos'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="12" rx="2" ry="2"/>
+            <line x1="6" y1="20" x2="6" y2="16"/>
+            <line x1="18" y1="20" x2="18" y2="16"/>
+            <line x1="12" y1="20" x2="12" y2="16"/>
           </svg>
           {{ view.label }}
         </a>

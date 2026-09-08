@@ -3,7 +3,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '../services/api.js'
 import * as XLSX from 'xlsx'
 import KioscoAsistencia from './KioscoAsistencia.vue'
-import { socket, unirseASalaFicha, salirDeSalaFicha, iniciarAsistenciaRemota, cerrarAsistenciaRemota } from '../services/socket.js'
+import { socket, unirseASalaFicha, salirDeSalaFicha } from '../services/socket.js'
 
 const usuarioStr = sessionStorage.getItem('user_data')
 const usuario = ref(usuarioStr ? JSON.parse(usuarioStr) : { id: '', nombre: 'Instructor', rol: 'Instructor' })
@@ -75,25 +75,32 @@ function iniciarSocketDocente() {
   })
 }
 
-function iniciarSesionRemotaDocente() {
+async function iniciarSesionRemotaDocente() {
   if (!fichaSeleccionada.value) return
-  sesionRemotaActiva.value = true
-  iniciarAsistenciaRemota({
-    fichaId: fichaSeleccionada.value._id,
-    fichaCodigo: fichaSeleccionada.value.codigoFicha,
-    nombrePrograma: fichaSeleccionada.value.nombrePrograma,
-    jornada: fichaSeleccionada.value.jornada,
-    fecha: fechaAsistencia.value,
-    instructorNombre: usuario.value.nombre || 'Instructor',
-  })
-  showToast('▶ Sesión remota iniciada: El Kiosco del aula está recibiendo huellas.', 'success')
+  try {
+    await api.clases.activar({
+      fichaId: fichaSeleccionada.value._id,
+      instructorId: usuario.value.id,
+    })
+    sesionRemotaActiva.value = true
+    showToast('▶ Clase activada: el lector del aula está listo para tomar asistencia.', 'success')
+  } catch (e) {
+    showToast(e.message || 'No se pudo activar la clase', 'error')
+  }
 }
 
-function detenerSesionRemotaDocente() {
+async function detenerSesionRemotaDocente() {
   if (!fichaSeleccionada.value) return
-  sesionRemotaActiva.value = false
-  cerrarAsistenciaRemota(fichaSeleccionada.value._id)
-  showToast('⏹️ Sesión remota finalizada: El Kiosco del aula se ha detenido.', 'info')
+  try {
+    await api.clases.finalizar({
+      fichaId: fichaSeleccionada.value._id,
+      instructorId: usuario.value.id,
+    })
+    sesionRemotaActiva.value = false
+    showToast('⏹️ Clase finalizada.', 'info')
+  } catch (e) {
+    showToast(e.message || 'No se pudo finalizar la clase', 'error')
+  }
 }
 
 function onKioscoAsistenciaMarcada(data) {
@@ -1344,15 +1351,6 @@ function descargarExcel(data, nombreArchivo) {
                   ⏹️ Finalizar Pase de Lista
                 </button>
 
-                <!-- Botón Abrir Kiosco en este PC -->
-                <button
-                  type="button"
-                  class="btn-open-kiosk"
-                  @click="modoKioscoActivo = true"
-                  title="Abrir vista de Kiosco a pantalla completa en este PC"
-                >
-                  🖥️ Abrir Pantalla Kiosco
-                </button>
               </div>
             </div>
 

@@ -60,15 +60,21 @@ export async function asociarFichas(req, res) {
 
     const idsValidos = fichaIds.filter((fid) => mongoose.Types.ObjectId.isValid(String(fid)))
 
-    // La relación vive en Ficha.dispositivoId. Reasignar = actualizar ese campo;
-    // si una ficha apuntaba a otro dispositivo, queda automáticamente "movida"
-    // (no hay que desvincular del anterior porque no existe un array inverso).
+    // El array recibido es el estado FINAL completo para este dispositivo:
+    // 1) asocia las fichas que vienen (si apuntaban a otro dispositivo, se mueven);
     if (idsValidos.length > 0) {
       await Ficha.updateMany(
         { _id: { $in: idsValidos } },
         { $set: { dispositivoId: id } }
       )
     }
+
+    // 2) desasocia las que ya no vienen en la lista (quedan sin dispositivo).
+    //    ($nin: [] coincide con todo, así que un array vacío desasocia todas.)
+    await Ficha.updateMany(
+      { dispositivoId: id, _id: { $nin: idsValidos } },
+      { $set: { dispositivoId: null } }
+    )
 
     const fichas = await Ficha.find({ dispositivoId: id }).select('codigoFicha nombrePrograma jornada aulaAsignada')
     const obj = dispositivo.toObject()
