@@ -9,4 +9,12 @@ const claseSchema = new mongoose.Schema({
   finalizadaAt: { type: Date, default: null },
 }, { timestamps: true, collection: 'clases' })
 
+// Índice parcial único: solo UNA clase Activa por deviceId, garantizado por
+// MongoDB. Permite histórico de clases Finalizadas (múltiples docs por device),
+// pero impide dos Activas simultáneas (respalda el upsert atómico de activar()).
+claseSchema.index(
+  { deviceId: 1 },
+  { unique: true, partialFilterExpression: { estado: 'Activa' } }
+)
+
 export default mongoose.model('Clase', claseSchema)
