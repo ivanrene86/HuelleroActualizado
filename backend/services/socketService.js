@@ -1,8 +1,10 @@
 import { Server } from 'socket.io'
+import mongoose from 'mongoose'
 import bcryptjs from 'bcryptjs'
 import Dispositivo from '../models/Dispositivo.js'
 import Clase from '../models/Clase.js'
 import Ficha from '../models/Ficha.js'
+import { verificarTokenJWT } from '../middlewares/auth.js'
 
 let io = null
 const sesionesActivas = new Map() // fichaId -> { activa: true, iniciadoPor, fecha, jornada, fichaCodigo, nombrePrograma }
@@ -21,10 +23,46 @@ export function initSocket(httpServer) {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Cliente conectado: ${socket.id}`)
 
-    // 1. Unirse a la sala de una ficha
-    socket.on('unirse_sala', ({ fichaId, rol }) => {
+    // 1. Unirse a la sala de una ficha (solo Instructor asignado o Administrador)
+    socket.on('unirse_sala', async ({ fichaId, rol }) => {
       if (!fichaId) return
       const room = `ficha_${fichaId}`
+
+      // Autenticación del dashboard: el JWT llega en el handshake (socket.handshake.auth.token).
+      // No se usa middleware global io.use() para no interferir con el HELLO del huellero
+      // (que se autentica por deviceId+token, un mecanismo totalmente separado).
+      const usuario = verificarTokenJWT(socket.handshake?.auth?.token)
+      if (!usuario) {
+        socket.emit('error_autenticacion', { error: 'Se requiere una sesión válida para unirse a la sala de la ficha.' })
+        return
+      }
+
+      // Autorización: solo Administrador (cualquier ficha) o Instructor asignado a esa ficha
+      // (en el array instructores o como instructorLiderId de la ficha).
+      if (usuario.rol !== 'Administrador') {
+        try {
+          if (!mongoose.Types.ObjectId.isValid(String(fichaId))) {
+            socket.emit('error_autenticacion', { error: 'Ficha inválida.' })
+            return
+          }
+          const ficha = await Ficha.findById(fichaId).select('instructores instructorLiderId')
+          if (!ficha) {
+            socket.emit('error_autenticacion', { error: 'Ficha no encontrada.' })
+            return
+          }
+          const userId = String(usuario.id)
+          const esInstructor = Array.isArray(ficha.instructores) && ficha.instructores.some((id) => String(id) === userId)
+          const esLider = ficha.instructorLiderId && String(ficha.instructorLiderId) === userId
+          if (!esInstructor && !esLider) {
+            socket.emit('error_autenticacion', { error: 'No estás asignado a esta ficha.' })
+            return
+          }
+        } catch (err) {
+          socket.emit('error_autenticacion', { error: 'Error validando el acceso a la ficha.' })
+          return
+        }
+      }
+
       socket.join(room)
       console.log(`[Socket.IO] Socket ${socket.id} (${rol || 'cliente'}) se unió a sala ${room}`)
 

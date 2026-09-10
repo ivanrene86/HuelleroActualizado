@@ -74,6 +74,7 @@ const headerSubtitulo = computed(() => {
 })
 
 import api from './services/api.js'
+import { reconectarConAuth } from './services/socket.js'
 
 const estadoSistema = reactive({
   estadoWebSocket: 'Desconectado',
@@ -171,6 +172,7 @@ function onLoginSuccess(userData) {
   } else {
     currentView.value = 'perfil'
   }
+  reconectarConAuth()
 }
 
 function cerrarSesion() {
@@ -181,6 +183,7 @@ function cerrarSesion() {
   sessionStorage.removeItem('auth_token')
   currentView.value = 'perfil'
   detenerTimerInactividad()
+  reconectarConAuth()
 }
 
 function navigate(view) {

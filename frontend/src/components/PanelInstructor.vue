@@ -84,6 +84,11 @@ function iniciarSocketDocente() {
       sesionRemotaActiva.value = false
     }
   })
+
+  socket.on('error_autenticacion', (data) => {
+    console.warn('[WS] error_autenticacion:', data)
+    showToast(data?.error || 'No autorizado para unirse a la sala de la ficha.', 'error')
+  })
 }
 
 async function restaurarEstadoClase() {
