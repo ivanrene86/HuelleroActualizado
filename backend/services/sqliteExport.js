@@ -11,6 +11,11 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'asistencias_institucion.sqlite')
+const fichasDir = path.join(dataDir, 'fichas')
+
+if (!fs.existsSync(fichasDir)) {
+  fs.mkdirSync(fichasDir, { recursive: true })
+}
 
 let db = null
 
@@ -18,14 +23,13 @@ function getDB() {
   if (!db) {
     db = new Database(dbPath)
     db.pragma('journal_mode = DELETE')
-    initTables()
+    initTables(db)
   }
   return db
 }
 
-function initTables() {
-  const sqlite = getDB()
-  sqlite.exec(`
+export function initTables(sqliteInstance) {
+  sqliteInstance.exec(`
     CREATE TABLE IF NOT EXISTS asistencias (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ficha_codigo TEXT NOT NULL,
@@ -39,21 +43,51 @@ function initTables() {
       hora TEXT,
       horas_tardanza INTEGER DEFAULT 0,
       tiempo_tardanza TEXT,
+      instructor_id TEXT,
+      instructor_nombre TEXT,
+      instructor_especialidad TEXT,
       fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(ficha_codigo, documento_aprendiz, fecha)
     );
+  `)
 
+  // Migración segura para bases de datos SQLite preexistentes
+  const columns = sqliteInstance.pragma('table_info(asistencias)').map(c => c.name)
+  if (!columns.includes('instructor_id')) {
+    sqliteInstance.exec(`ALTER TABLE asistencias ADD COLUMN instructor_id TEXT;`)
+  }
+  if (!columns.includes('instructor_nombre')) {
+    sqliteInstance.exec(`ALTER TABLE asistencias ADD COLUMN instructor_nombre TEXT;`)
+  }
+  if (!columns.includes('instructor_especialidad')) {
+    sqliteInstance.exec(`ALTER TABLE asistencias ADD COLUMN instructor_especialidad TEXT;`)
+  }
+
+  sqliteInstance.exec(`
     CREATE INDEX IF NOT EXISTS idx_asistencias_ficha_fecha ON asistencias (ficha_codigo, fecha);
     CREATE INDEX IF NOT EXISTS idx_asistencias_documento ON asistencias (documento_aprendiz);
+    CREATE INDEX IF NOT EXISTS idx_asistencias_instructor ON asistencias (instructor_id);
   `)
 }
 
-// Inicializar al cargar el módulo
+/**
+ * Retorna o crea la base de datos SQLite específica de una ficha
+ */
+export function getDBFicha(codigoFicha) {
+  const safeCodigo = String(codigoFicha).replace(/[^a-zA-Z0-9_-]/g, '')
+  const filePath = path.join(fichasDir, `asistencias_ficha_${safeCodigo}.sqlite`)
+  const sqlite = new Database(filePath)
+  sqlite.pragma('journal_mode = DELETE')
+  initTables(sqlite)
+  return { db: sqlite, filePath }
+}
+
+// Inicializar base global al cargar el módulo
 try {
   getDB()
-  console.log(`[SQLite] Base de datos relacional lista en: ${dbPath}`)
+  console.log(`[SQLite] Base de datos relacional global lista en: ${dbPath}`)
 } catch (err) {
-  console.error('[SQLite] Error inicializando SQLite:', err.message)
+  console.error('[SQLite] Error inicializando SQLite global:', err.message)
 }
 
 export function checkpointSQLite() {
@@ -67,9 +101,9 @@ export function checkpointSQLite() {
  * Inserta o actualiza un registro individual de asistencia (UPSERT)
  * No incluye motivos privados de excusas, preservando la confidencialidad.
  */
-export function upsertAsistenciaSQLite(item) {
+export function upsertAsistenciaSQLite(item, targetDb = null) {
   try {
-    const sqlite = getDB()
+    const sqlite = targetDb || getDB()
     const stmt = sqlite.prepare(`
       INSERT INTO asistencias (
         ficha_codigo,
@@ -83,6 +117,9 @@ export function upsertAsistenciaSQLite(item) {
         hora,
         horas_tardanza,
         tiempo_tardanza,
+        instructor_id,
+        instructor_nombre,
+        instructor_especialidad,
         fecha_actualizacion
       ) VALUES (
         @fichaCodigo,
@@ -96,6 +133,9 @@ export function upsertAsistenciaSQLite(item) {
         @hora,
         @horasTardanza,
         @tiempoTardanza,
+        @instructorId,
+        @instructorNombre,
+        @instructorEspecialidad,
         CURRENT_TIMESTAMP
       )
       ON CONFLICT(ficha_codigo, documento_aprendiz, fecha) DO UPDATE SET
@@ -107,6 +147,9 @@ export function upsertAsistenciaSQLite(item) {
         hora = excluded.hora,
         horas_tardanza = excluded.horas_tardanza,
         tiempo_tardanza = excluded.tiempo_tardanza,
+        instructor_id = excluded.instructor_id,
+        instructor_nombre = excluded.instructor_nombre,
+        instructor_especialidad = excluded.instructor_especialidad,
         fecha_actualizacion = CURRENT_TIMESTAMP
     `)
 
@@ -121,7 +164,10 @@ export function upsertAsistenciaSQLite(item) {
       estado: item.estado,
       hora: item.hora || '—',
       horasTardanza: Number(item.horasTardanza) || 0,
-      tiempoTardanza: item.tiempoTardanza || '0 horas'
+      tiempoTardanza: item.tiempoTardanza || '0 horas',
+      instructorId: item.instructorId ? String(item.instructorId) : null,
+      instructorNombre: item.instructorNombre || null,
+      instructorEspecialidad: item.instructorEspecialidad || null,
     })
     return { ok: true }
   } catch (err) {
@@ -133,10 +179,10 @@ export function upsertAsistenciaSQLite(item) {
 /**
  * Inserta o actualiza un lote de asistencias en una sola transacción rápida
  */
-export function upsertAsistenciasBatchSQLite(items) {
+export function upsertAsistenciasBatchSQLite(items, targetDb = null) {
   if (!items || items.length === 0) return { ok: true, count: 0 }
   try {
-    const sqlite = getDB()
+    const sqlite = targetDb || getDB()
     const stmt = sqlite.prepare(`
       INSERT INTO asistencias (
         ficha_codigo,
@@ -150,6 +196,9 @@ export function upsertAsistenciasBatchSQLite(items) {
         hora,
         horas_tardanza,
         tiempo_tardanza,
+        instructor_id,
+        instructor_nombre,
+        instructor_especialidad,
         fecha_actualizacion
       ) VALUES (
         @fichaCodigo,
@@ -163,6 +212,9 @@ export function upsertAsistenciasBatchSQLite(items) {
         @hora,
         @horasTardanza,
         @tiempoTardanza,
+        @instructorId,
+        @instructorNombre,
+        @instructorEspecialidad,
         CURRENT_TIMESTAMP
       )
       ON CONFLICT(ficha_codigo, documento_aprendiz, fecha) DO UPDATE SET
@@ -174,6 +226,9 @@ export function upsertAsistenciasBatchSQLite(items) {
         hora = excluded.hora,
         horas_tardanza = excluded.horas_tardanza,
         tiempo_tardanza = excluded.tiempo_tardanza,
+        instructor_id = excluded.instructor_id,
+        instructor_nombre = excluded.instructor_nombre,
+        instructor_especialidad = excluded.instructor_especialidad,
         fecha_actualizacion = CURRENT_TIMESTAMP
     `)
 
@@ -190,7 +245,10 @@ export function upsertAsistenciasBatchSQLite(items) {
           estado: item.estado,
           hora: item.hora || '—',
           horasTardanza: Number(item.horasTardanza) || 0,
-          tiempoTardanza: item.tiempoTardanza || '0 horas'
+          tiempoTardanza: item.tiempoTardanza || '0 horas',
+          instructorId: item.instructorId ? String(item.instructorId) : null,
+          instructorNombre: item.instructorNombre || null,
+          instructorEspecialidad: item.instructorEspecialidad || null,
         })
       }
     })
@@ -204,8 +262,15 @@ export function upsertAsistenciasBatchSQLite(items) {
 }
 
 /**
- * Retorna la ruta física del archivo .sqlite para descargas o sincronización
+ * Retorna la ruta física del archivo global .sqlite
  */
 export function getSqliteFilePath() {
   return dbPath
+}
+
+/**
+ * Retorna la ruta del directorio de fichas individuales
+ */
+export function getFichasDir() {
+  return fichasDir
 }

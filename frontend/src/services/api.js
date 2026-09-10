@@ -135,7 +135,9 @@ export default {
     inhabilitarJornada(body) { return request('/asistencias/inhabilitar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
     reactivarJornada(body) { return request('/asistencias/reactivar-jornada', { method: 'POST', body: JSON.stringify(body) }) },
     downloadSqliteUrl() { return `${BASE}/asistencias/sqlite/download` },
+    downloadSqliteFichaUrl(codigoFicha) { return `${BASE}/asistencias/sqlite/ficha/${codigoFicha}` },
     syncAllSqlite() { return request('/asistencias/sqlite/sync-all', { method: 'POST' }) },
+    syncFichasSqlite() { return request('/asistencias/sqlite/sync-fichas', { method: 'POST' }) },
   },
 
   excusas: {

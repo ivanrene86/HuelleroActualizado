@@ -1,6 +1,7 @@
 import Asistencia from '../models/Asistencia.js'
 import Estudiante from '../models/Estudiante.js'
 import Ficha from '../models/Ficha.js'
+import Instructor from '../models/Instructor.js'
 import mongoose from 'mongoose'
 import { getFichaIdList, getHoyString } from '../services/asistenciaService.js'
 import {
@@ -73,15 +74,16 @@ export async function createAsistencia(req, res) {
       await Estudiante.findByIdAndUpdate(estudianteId, { estadoAsistencia: estado })
     }
 
-    // 2. Sincronizar automáticamente con el archivo SQLite único
+    // 2. Sincronizar automáticamente con el archivo SQLite único y por ficha
     try {
-      const [estudianteDoc, fichaDoc] = await Promise.all([
+      const [estudianteDoc, fichaDoc, instructorDoc] = await Promise.all([
         Estudiante.findById(estudianteId),
-        Ficha.findById(fichaId)
+        Ficha.findById(fichaId),
+        instructorId ? Instructor.findById(instructorId) : null
       ])
 
       if (estudianteDoc && fichaDoc) {
-        upsertAsistenciaSQLite({
+        const itemSqlite = {
           fichaCodigo: fichaDoc.codigoFicha || String(fichaId),
           nombrePrograma: fichaDoc.nombrePrograma || '',
           jornada: fichaDoc.jornada || '',
@@ -92,8 +94,22 @@ export async function createAsistencia(req, res) {
           estado: estado,
           hora: hora || '—',
           horasTardanza: horasTardanza || 0,
-          tiempoTardanza: tiempoTardanza || '0 horas'
-        })
+          tiempoTardanza: tiempoTardanza || '0 horas',
+          instructorId: instructorDoc ? String(instructorDoc._id) : null,
+          instructorNombre: instructorDoc ? `${instructorDoc.nombres || ''} ${instructorDoc.apellidos || ''}`.trim() : null,
+          instructorEspecialidad: instructorDoc?.especialidad || null,
+        }
+
+        // Guardar en base global
+        upsertAsistenciaSQLite(itemSqlite)
+
+        // Guardar también en la base individual de la ficha
+        try {
+          const { getDBFicha } = await import('../services/sqliteExport.js')
+          const { db } = getDBFicha(fichaDoc.codigoFicha)
+          upsertAsistenciaSQLite(itemSqlite, db)
+          db.close()
+        } catch (eFicha) {}
       }
     } catch (sqliteErr) {
       console.warn('[SQLite] Error en sincronización individual:', sqliteErr.message)
@@ -249,6 +265,78 @@ export async function syncAllSqlite(req, res) {
 
     const resultado = upsertAsistenciasBatchSQLite(rows)
     res.json({ ok: true, total: rows.length, ...resultado })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+/**
+ * Descarga el archivo SQLite exclusivo de una Ficha (enfoque híbrido: aprendices + datos del docente)
+ */
+export async function downloadSqliteFicha(req, res) {
+  try {
+    const { codigoFicha } = req.params
+    if (!codigoFicha) {
+      return res.status(400).json({ error: 'Código de ficha requerido' })
+    }
+
+    const ficha = await Ficha.findOne({ codigoFicha }).populate('instructorLiderId')
+    if (!ficha) {
+      return res.status(404).json({ error: 'Ficha no encontrada' })
+    }
+
+    const asistencias = await Asistencia.find({ fichaId: ficha._id })
+      .populate('estudianteId')
+      .populate('instructorId')
+      .sort({ fecha: 1 })
+
+    const rows = []
+    for (const a of asistencias) {
+      if (!a.estudianteId) continue
+      const inst = a.instructorId || ficha.instructorLiderId
+      rows.push({
+        fichaCodigo: ficha.codigoFicha,
+        nombrePrograma: ficha.nombrePrograma || '',
+        jornada: ficha.jornada || '',
+        documentoAprendiz: a.estudianteId.numeroDocumento || '',
+        nombreAprendiz: `${a.estudianteId.nombres || ''} ${a.estudianteId.apellidos || ''}`.trim(),
+        correoAprendiz: a.estudianteId.correo || '',
+        fecha: a.fecha,
+        estado: a.estado,
+        hora: a.hora || '—',
+        horasTardanza: a.horasTardanza || 0,
+        tiempoTardanza: a.tiempoTardanza || '0 horas',
+        instructorId: inst ? String(inst._id) : null,
+        instructorNombre: inst ? `${inst.nombres || ''} ${inst.apellidos || ''}`.trim() : 'Sin asignar',
+        instructorEspecialidad: inst?.especialidad || '',
+      })
+    }
+
+    const { getDBFicha } = await import('../services/sqliteExport.js')
+    const { db, filePath } = getDBFicha(ficha.codigoFicha)
+    try {
+      upsertAsistenciasBatchSQLite(rows, db)
+    } finally {
+      try { db.close() } catch (e) {}
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.sqlite3')
+    res.setHeader('Content-Disposition', `attachment; filename="asistencias_ficha_${ficha.codigoFicha}.sqlite"`)
+    res.download(filePath, `asistencias_ficha_${ficha.codigoFicha}.sqlite`)
+  } catch (err) {
+    console.error('[SQLite] Error en descarga por ficha:', err)
+    res.status(500).json({ error: err.message })
+  }
+}
+
+/**
+ * Ejecuta manualmente o bajo demanda la sincronización nocturna de todas las fichas
+ */
+export async function ejecutarSincronizacionFichas(req, res) {
+  try {
+    const { sincronizarSqlitePorFicha } = await import('../services/cronService.js')
+    const resultado = await sincronizarSqlitePorFicha()
+    res.json({ ok: true, mensaje: 'Sincronización híbrida por ficha ejecutada con éxito', ...resultado })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

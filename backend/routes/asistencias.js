@@ -26,8 +26,10 @@ router.post('/reactivar-jornada',
   asistenciaController.reactivarJornada
 )
 
-// Gestión de base de datos SQLite offline (restringido a Administrador)
+// Gestión de base de datos SQLite offline
 router.get('/sqlite/download', autenticarJWT, verificarRol(['Administrador']), asistenciaController.downloadSqlite)
+router.get('/sqlite/ficha/:codigoFicha', autenticarJWT, verificarRol(['Administrador', 'Instructor']), asistenciaController.downloadSqliteFicha)
 router.post('/sqlite/sync-all', autenticarJWT, verificarRol(['Administrador']), asistenciaController.syncAllSqlite)
+router.post('/sqlite/sync-fichas', autenticarJWT, verificarRol(['Administrador']), asistenciaController.ejecutarSincronizacionFichas)
 
 export default router
