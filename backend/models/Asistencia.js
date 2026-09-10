@@ -14,4 +14,11 @@ const asistenciaSchema = new mongoose.Schema({
   metodo: { type: String, enum: ['HUELLA', 'MANUAL'], default: 'HUELLA' },
 }, { timestamps: true, collection: 'asistencias' })
 
+// Índice único real: elimina la ventana de carrera del anti-duplicado en
+// procesarAsistencia. Solo puede existir UNA asistencia por (estudiante, ficha, día).
+asistenciaSchema.index(
+  { estudianteId: 1, fichaId: 1, fecha: 1 },
+  { unique: true }
+)
+
 export default mongoose.model('Asistencia', asistenciaSchema)

@@ -8,6 +8,7 @@ const DEFAULTS = {
   token: null,
   backendUrl: process.env.HUELLERO_BACKEND_URL || 'http://localhost:3000',
   wsUrl: process.env.HUELLERO_WS_URL || 'ws://localhost:3000',
+  BIOMETRIC_MATCH_THRESHOLD: 21474,
 }
 
 let cache = null

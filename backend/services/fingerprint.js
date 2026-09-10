@@ -23,7 +23,17 @@ let MAX_FMD_SIZE = 26 + 4 + (255 * 6) + 2
 // En el SDK de DigitalPersona, la puntuación va de 0 (idéntica) a 0x7FFFFFFF (2,147,483,647).
 // FAR 1 / 100,000 (0.001% de falso positivo) = 21,474 (Estándar biométrico de alta precisión)
 // FAR 1 / 10,000  (0.01% de falso positivo)  = 214,748
-const MATCH_THRESHOLD = Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474
+let MATCH_THRESHOLD = Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474
+
+// Permite sobrescribir el umbral en runtime (p. ej. desde config.json del huellero).
+// El backend no lo llama: sigue usando process.env.BIOMETRIC_MATCH_THRESHOLD.
+export function setMatchThreshold(value) {
+  const n = Number(value)
+  if (Number.isFinite(n) && n > 0) {
+    MATCH_THRESHOLD = n
+    console.log(`[fingerprint] BIOMETRIC_MATCH_THRESHOLD establecido en ${n}`)
+  }
+}
 
 let dpfj = null
 

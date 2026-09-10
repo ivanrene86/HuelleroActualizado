@@ -46,6 +46,7 @@ function notificarProgresoEnrolamiento(payload) {
 export async function init() {
   await store.init()
   inicializarCaptura()
+  fingerprint.setMatchThreshold(getConfig().BIOMETRIC_MATCH_THRESHOLD)
   wsClient.onConnectionChange(notificarEstado)
   wsClient.onConnectionChange((conectado) => {
     if (conectado) {
