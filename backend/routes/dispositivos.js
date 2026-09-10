@@ -7,5 +7,6 @@ const router = Router()
 router.post('/registrar', dispositivoController.registrar)
 router.get('/', autenticarJWT, verificarRol(['Administrador']), dispositivoController.getDispositivos)
 router.put('/:id/fichas', autenticarJWT, verificarRol(['Administrador']), dispositivoController.asociarFichas)
+router.put('/:id/reset-fingerprint', autenticarJWT, verificarRol(['Administrador']), dispositivoController.resetFingerprint)
 
 export default router

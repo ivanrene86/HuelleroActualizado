@@ -3,15 +3,31 @@ import path, { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { execFileSync } from "child_process";
 import { io } from "socket.io-client";
 import koffi from "koffi";
 import { PNG } from "pngjs";
+const GUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+function obtenerHardwareFingerprint() {
+  try {
+    const salida = execFileSync(
+      "reg",
+      ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"],
+      { encoding: "utf8", windowsHide: true }
+    );
+    const match = salida.match(GUID_RE);
+    return match ? match[0].toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 const CONFIG_PATH = resolve(process.cwd(), "config.json");
 const DEFAULTS = {
   deviceId: null,
   token: null,
   backendUrl: process.env.HUELLERO_BACKEND_URL || "http://localhost:3000",
-  wsUrl: process.env.HUELLERO_WS_URL || "ws://localhost:3000"
+  wsUrl: process.env.HUELLERO_WS_URL || "ws://localhost:3000",
+  BIOMETRIC_MATCH_THRESHOLD: 21474
 };
 let cache = null;
 function getConfig() {
@@ -42,7 +58,7 @@ async function registrarDispositivoSiNoExiste() {
     res = await fetch(`${config.backendUrl}/api/dispositivos/registrar`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ hardwareFingerprint: obtenerHardwareFingerprint() }),
       signal: AbortSignal.timeout(1e4)
     });
   } catch {
@@ -232,7 +248,11 @@ function connect(config) {
   });
   socket.on("connect", () => {
     log(`Conectado a ${url}`);
-    socket.emit("HELLO", { deviceId: String(deviceId), token: String(token) });
+    socket.emit("HELLO", {
+      deviceId: String(deviceId),
+      token: String(token),
+      hardwareFingerprint: obtenerHardwareFingerprint()
+    });
     setConnected(true);
   });
   socket.on("disconnect", (reason) => {
@@ -770,7 +790,14 @@ const DPFJ_E_MORE_DATA = 96075789;
 const DPFJ_FMD_ANSI_378_2004 = 1769473;
 const DPFJ_POSITION_UNKNOWN = 0;
 let MAX_FMD_SIZE = 26 + 4 + 255 * 6 + 2;
-const MATCH_THRESHOLD = Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474;
+let MATCH_THRESHOLD = Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 21474;
+function setMatchThreshold(value) {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0) {
+    MATCH_THRESHOLD = n;
+    console.log(`[fingerprint] BIOMETRIC_MATCH_THRESHOLD establecido en ${n}`);
+  }
+}
 let dpfj = null;
 try {
   koffi.load(path.join(dllFolder, "dpfpdd.dll"));
@@ -1113,6 +1140,7 @@ function notificarProgresoEnrolamiento(payload) {
 async function init() {
   await init$1();
   inicializarCaptura();
+  setMatchThreshold(getConfig().BIOMETRIC_MATCH_THRESHOLD);
   wsClient.onConnectionChange(notificarEstado);
   wsClient.onConnectionChange((conectado) => {
     if (conectado) {

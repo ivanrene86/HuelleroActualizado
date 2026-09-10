@@ -63,6 +63,24 @@ async function guardar(device) {
     savingId.value = null
   }
 }
+
+async function resetFingerprint(device) {
+  if (!confirm(`¿Resetear la identidad de hardware de "${deviceLabel(device)}"?\n\n` +
+    'Se eliminará el fingerprint guardado y el dispositivo lo re-adoptará en su próxima conexión. ' +
+    'Úsalo solo si reinstalaste Windows o reemplazaste el disco de ese PC.')) {
+    return
+  }
+  savingId.value = device._id
+  try {
+    await api.dispositivos.resetFingerprint(device._id)
+    showToast('Identidad de hardware reseteada. Re-adoptará al reconectar.')
+    await loadDispositivos()
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'No se pudo resetear'), 'error')
+  } finally {
+    savingId.value = null
+  }
+}
 </script>
 
 <template>
@@ -87,9 +105,14 @@ async function guardar(device) {
             {{ d.activo ? 'Activo' : 'Inactivo' }}
           </span>
         </div>
-        <button class="btn btn-primary btn-sm" :disabled="savingId === d._id" @click="guardar(d)">
-          {{ savingId === d._id ? 'Guardando…' : '💾 Guardar' }}
-        </button>
+        <div class="card-actions">
+          <button class="btn btn-primary btn-sm" :disabled="savingId === d._id" @click="guardar(d)">
+            {{ savingId === d._id ? 'Guardando…' : '💾 Guardar' }}
+          </button>
+          <button class="btn btn-sm btn-reset" :disabled="savingId === d._id" @click="resetFingerprint(d)">
+            🔄 Resetear identidad de hardware
+          </button>
+        </div>
       </div>
 
       <div class="fichas-asociadas">
@@ -133,6 +156,20 @@ async function guardar(device) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.btn-reset {
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
 }
 
 .device-id {

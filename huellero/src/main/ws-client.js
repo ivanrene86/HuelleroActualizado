@@ -16,6 +16,7 @@
 // NO gestiona sincronización de asistencias pendientes: eso es sync.js.
 
 import { io } from 'socket.io-client'
+import { obtenerHardwareFingerprint } from './hardware-fingerprint.js'
 
 // ---------------------------------------------------------------------------
 // Estado del singleton
@@ -121,8 +122,13 @@ export function connect(config) {
 
   socket.on('connect', () => {
     log(`Conectado a ${url}`)
-    // Autenticación: primer mensaje tras (re)conectar.
-    socket.emit('HELLO', { deviceId: String(deviceId), token: String(token) })
+    // Autenticación: primer mensaje tras (re)conectar. El fingerprint se calcula
+    // en runtime (no se persiste en config.json) para no hacerlo copiable.
+    socket.emit('HELLO', {
+      deviceId: String(deviceId),
+      token: String(token),
+      hardwareFingerprint: obtenerHardwareFingerprint(),
+    })
     setConnected(true)
   })
 

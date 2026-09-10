@@ -6,15 +6,22 @@ import Ficha from '../models/Ficha.js'
 
 export async function registrar(req, res) {
   try {
-    const { nombre } = req.body
+    const { nombre, hardwareFingerprint } = req.body
 
     const deviceId = crypto.randomUUID()
     const token = crypto.randomBytes(32).toString('hex')
     const tokenHash = await bcryptjs.hash(token, 10)
 
+    // Hash de identidad (SHA-256) del MachineGuid, NO una contraseña:
+    // solo necesitamos comparar por igualdad, así que SHA-256 es correcto y rápido.
+    const hardwareFingerprintHash = hardwareFingerprint
+      ? crypto.createHash('sha256').update(String(hardwareFingerprint)).digest('hex')
+      : null
+
     await Dispositivo.create({
       deviceId,
       tokenHash,
+      hardwareFingerprintHash,
       nombre: nombre || '',
       activo: true,
     })
@@ -35,6 +42,7 @@ export async function getDispositivos(req, res) {
     for (const d of dispositivos) {
       const obj = d.toObject()
       delete obj.tokenHash
+      delete obj.hardwareFingerprintHash
       const fichas = await Ficha.find({ dispositivoId: d._id }).select('codigoFicha nombrePrograma jornada aulaAsignada')
       resultado.push({ ...obj, fichas })
     }
@@ -79,7 +87,25 @@ export async function asociarFichas(req, res) {
     const fichas = await Ficha.find({ dispositivoId: id }).select('codigoFicha nombrePrograma jornada aulaAsignada')
     const obj = dispositivo.toObject()
     delete obj.tokenHash
+    delete obj.hardwareFingerprintHash
     res.json({ ok: true, dispositivo: obj, fichas })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+export async function resetFingerprint(req, res) {
+  try {
+    const { id } = req.params
+    const dispositivo = await Dispositivo.findById(id)
+    if (!dispositivo) {
+      return res.status(404).json({ error: 'Dispositivo no encontrado' })
+    }
+
+    dispositivo.hardwareFingerprintHash = null
+    await dispositivo.save()
+
+    res.json({ ok: true, message: 'Identidad de hardware reseteada. El dispositivo la re-adoptará en su próxima conexión.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

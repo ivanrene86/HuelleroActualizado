@@ -1,5 +1,6 @@
 import { Server } from 'socket.io'
 import mongoose from 'mongoose'
+import crypto from 'crypto'
 import bcryptjs from 'bcryptjs'
 import Dispositivo from '../models/Dispositivo.js'
 import Clase from '../models/Clase.js'
@@ -147,6 +148,25 @@ export function initSocket(httpServer) {
           console.log(`[Socket.IO] HELLO rechazado: token inválido para ${deviceId} (socket ${socket.id})`)
           socket.disconnect(true)
           return
+        }
+
+        // Validación del fingerprint de hardware (defensa en profundidad contra la
+        // copia de config.json a otra instalación de Windows). Solo se valida si el
+        // huellero ENVÍA el fingerprint; si no lo envía (lectura del registro falló),
+        // se trata como "no se pudo verificar" y NO se rechaza la conexión.
+        const hardwareFingerprint = data?.hardwareFingerprint
+        if (hardwareFingerprint) {
+          const fpHash = crypto.createHash('sha256').update(String(hardwareFingerprint)).digest('hex')
+          if (!dispositivo.hardwareFingerprintHash) {
+            // Primer contacto: adoptar el fingerprint de esta instalación.
+            dispositivo.hardwareFingerprintHash = fpHash
+            await dispositivo.save()
+            console.log(`[Socket.IO] Fingerprint de hardware adoptado para ${deviceId}`)
+          } else if (dispositivo.hardwareFingerprintHash !== fpHash) {
+            console.log(`[Socket.IO] HELLO rechazado: fingerprint de hardware no coincide para ${deviceId} (posible copia de identidad)`)
+            socket.disconnect(true)
+            return
+          }
         }
 
         socket.data.deviceId = String(deviceId)

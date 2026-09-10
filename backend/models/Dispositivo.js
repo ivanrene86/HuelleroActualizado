@@ -3,6 +3,7 @@ import mongoose from 'mongoose'
 const dispositivoSchema = new mongoose.Schema({
   deviceId: { type: String, required: true, unique: true },
   tokenHash: { type: String, required: true },
+  hardwareFingerprintHash: { type: String, default: null },
   nombre: { type: String, default: '' },
   activo: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
