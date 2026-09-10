@@ -115,8 +115,11 @@ export function initSocket(httpServer) {
         dispositivosConectados.set(String(deviceId), socket.id)
         console.log(`[Socket.IO] Huellero registrado: ${deviceId} (socket ${socket.id})`)
 
-        // Reenvío del ACTIVATE pendiente tras reconexión (Fase 6):
-        // si quedó una clase activa en BD para este deviceId, se la reenvía al recién conectado.
+        // Reconciliación del estado real tras autenticar (Fase 6):
+        // se reenvía al dispositivo el estado que tiene en BD, haya o no clase activa.
+        // - Clase Activa → ACTIVATE pendiente.
+        // - Sin clase Activa → DEACTIVATE (para limpiar una "clase fantasma" local
+        //   si el dispositivo estuvo offline al finalizar la clase).
         try {
           const claseActiva = await Clase.findOne({ deviceId: String(deviceId), estado: 'Activa' })
           if (claseActiva) {
@@ -134,9 +137,16 @@ export function initSocket(httpServer) {
               codigoFicha,
             })
             console.log(`[Socket.IO] Reenviando ACTIVATE pendiente a ${deviceId} tras reconexión (ficha ${codigoFicha || claseActiva.fichaId})`)
+          } else {
+            emitirDesactivacion(deviceId, {
+              type: 'DEACTIVATE',
+              fichaId: null,
+              instructorId: null,
+            })
+            console.log(`[Socket.IO] Sin clase activa en BD para ${deviceId}: enviando DEACTIVATE para limpiar estado local`)
           }
         } catch (err) {
-          console.log(`[Socket.IO] Error reenviando ACTIVATE pendiente a ${deviceId}: ${err.message}`)
+          console.log(`[Socket.IO] Error reconciliando estado para ${deviceId}: ${err.message}`)
         }
       } catch (err) {
         console.log(`[Socket.IO] HELLO rechazado por error: ${deviceId} (socket ${socket.id}) - ${err.message}`)

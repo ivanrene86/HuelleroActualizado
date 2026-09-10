@@ -1,6 +1,7 @@
 import mongoose from 'mongoose'
 import Clase from '../models/Clase.js'
 import Ficha from '../models/Ficha.js'
+import Dispositivo from '../models/Dispositivo.js'
 import { emitirActivacion, emitirDesactivacion, emitirClaseActivada, emitirClaseDesactivada } from '../services/socketService.js'
 
 export async function activar(req, res) {
@@ -30,7 +31,15 @@ export async function activar(req, res) {
         error: 'Esta ficha no tiene un dispositivo asociado. Pide al administrador que la asigne desde Dispositivos.',
       })
     }
-    const deviceId = String(ficha.dispositivoId)
+
+    // Ficha.dispositivoId es el ObjectId del documento Dispositivo (ref),
+    // NO el campo deviceId (UUID string). Hay que resolver el documento para
+    // obtener el UUID real que identifica al huellero en WebSocket.
+    const dispositivo = await Dispositivo.findById(ficha.dispositivoId)
+    if (!dispositivo) {
+      return res.status(400).json({ success: false, error: 'Dispositivo asociado no encontrado' })
+    }
+    const deviceId = String(dispositivo.deviceId)
 
     // Operación atómica: upsert sobre la clase Activa de ese deviceId.
     // Evita la ventana de carrera de findOne + save/create (que podía crear
