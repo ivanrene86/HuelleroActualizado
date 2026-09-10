@@ -20,6 +20,7 @@ const vistaFicha = ref('asistencia')
 // Modo Kiosco y Control Remoto en Vivo
 const modoKioscoActivo = ref(false)
 const sesionRemotaActiva = ref(false)
+const dispositivoOnline = ref(false)
 const feedEnVivoDocente = ref([])
 
 const emit = defineEmits(['cerrar-sesion'])
@@ -88,6 +89,18 @@ function iniciarSocketDocente() {
   socket.on('error_autenticacion', (data) => {
     console.warn('[WS] error_autenticacion:', data)
     showToast(data?.error || 'No autorizado para unirse a la sala de la ficha.', 'error')
+  })
+
+  socket.on('DEVICE_STATUS', (data) => {
+    dispositivoOnline.value = !!data?.online
+  })
+
+  socket.on('DEVICE_CONNECTED', () => {
+    dispositivoOnline.value = true
+  })
+
+  socket.on('DEVICE_DISCONNECTED', () => {
+    dispositivoOnline.value = false
   })
 }
 
@@ -1353,6 +1366,9 @@ function descargarExcel(data, nombreArchivo) {
                 <div class="remote-status-badge" :class="sesionRemotaActiva ? 'badge-live' : 'badge-idle'">
                   <span class="live-dot" :class="{ 'live-dot-pulsing': sesionRemotaActiva }"></span>
                   <span>{{ sesionRemotaActiva ? 'CLASE EN VIVO (PASE DE LISTA REMOTO ACTIVO)' : 'PASE DE LISTA REMOTO EN ESPERA' }}</span>
+                </div>
+                <div class="remote-device-status" :class="dispositivoOnline ? 'device-online' : 'device-offline'">
+                  {{ dispositivoOnline ? '🟢 Lector del aula conectado' : '🔴 Lector del aula desconectado' }}
                 </div>
                 <p class="remote-desc">
                   {{ sesionRemotaActiva 
@@ -3009,6 +3025,20 @@ function descargarExcel(data, nombreArchivo) {
   background: rgba(148, 163, 184, 0.15);
   border: 1px solid #64748b;
   color: #cbd5e1;
+}
+
+.remote-device-status {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.device-online {
+  color: #4ade80;
+}
+
+.device-offline {
+  color: #f87171;
 }
 
 .live-dot {

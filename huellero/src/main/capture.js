@@ -194,6 +194,7 @@ function describirCalidad(code) {
 function cargarBiblioteca() {
   const searchPaths = [
     path.join(dllFolder, 'dpfpdd.dll'),
+    ...(process.resourcesPath ? [path.join(process.resourcesPath, 'dll', 'dpfpdd.dll')] : []),
     'C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/x64/dpfpdd.dll',
     'C:/Program Files/DigitalPersona/U.are.U SDK/Windows/Lib/win32/dpfpdd.dll',
   ]

@@ -159,6 +159,8 @@ export default {
     listar() { return request('/dispositivos') },
     asociarFichas(id, fichaIds) { return request(`/dispositivos/${id}/fichas`, { method: 'PUT', body: JSON.stringify({ fichaIds }) }) },
     resetFingerprint(id) { return request(`/dispositivos/${id}/reset-fingerprint`, { method: 'PUT' }) },
+    aprobar(id) { return request(`/dispositivos/${id}/aprobar`, { method: 'PUT' }) },
+    eliminar(id) { return request(`/dispositivos/${id}`, { method: 'DELETE' }) },
   },
 
   clases: {

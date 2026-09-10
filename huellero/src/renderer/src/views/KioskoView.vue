@@ -13,6 +13,7 @@ const resultado = ref(null)
 const online = computed(() => props.status.online)
 const claseActiva = computed(() => props.status.claseActiva)
 const dispositivoRegistrado = computed(() => !!props.status.dispositivoRegistrado)
+const ultimoRechazo = computed(() => props.status.ultimoRechazo || null)
 
 const aviso = ref('')
 let avisoTimer = null
@@ -71,8 +72,8 @@ async function leerHuella() {
     <div v-if="aviso" class="aviso-sesion">{{ aviso }}</div>
 
     <div class="status-bar">
-      <span class="pill" :class="online ? 'ok' : 'off'">
-        {{ online ? 'En línea' : 'Sin conexión' }}
+      <span class="pill" :class="online ? 'ok' : (ultimoRechazo ? 'warn' : 'off')">
+        {{ online ? 'En línea' : (ultimoRechazo ? ultimoRechazo.message : 'Sin conexión') }}
       </span>
       <span v-if="claseActiva" class="pill ok">
         Clase activa · Ficha {{ claseActiva.codigoFicha || claseActiva.fichaId }}

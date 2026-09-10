@@ -347,6 +347,10 @@ Captura real funcionando contra el lector físico **U.are.U 4500** mediante `hue
 
 `[IMPLEMENTADO 2026-09-10]` — Identidad de dispositivo atada al hardware: se descubrió que copiar la carpeta `huellero/` completa (con `config.json`) a otro PC hacía que ese PC heredara la identidad del dispositivo original, ya que nada ataba `deviceId`/`token` al hardware físico. Fix: nuevo campo `Dispositivo.hardwareFingerprintHash` (SHA-256 del MachineGuid de Windows, leído vía `reg query` con Node puro, sin binding nativo). El huellero envía el fingerprint en el registro inicial y en cada `HELLO` (calculado en runtime, nunca persistido en `config.json`). El backend adopta el fingerprint si es `null` (bootstrap para dispositivos ya registrados), acepta si coincide, y rechaza + desconecta si no coincide (log "posible copia de identidad"). Botón "Resetear identidad de hardware" en `PanelDispositivos.vue` para reinstalaciones legítimas de Windows. Verificado con 2 pruebas reales: adopción del dispositivo existente, y rechazo real simulando un fingerprint distinto. Pendiente futuro anotado (no implementado): rotación de token junto con el reset, para cerrar la ventana de carrera donde alguien con el `config.json` viejo podría re-vincularse antes que el dispositivo legítimo tras un reset.
 
+`[IMPLEMENTADO 2026-09-10]` — Flujo de aprobación de dispositivos: los dispositivos nuevos ya no se activan automáticamente al registrarse (antes: `activo:true` por defecto, sin supervisión). Ahora se registran con `activo:false` y `aprobadoEn:null`, capturando también `hostname` (`os.hostname()`) junto al `hardwareFingerprint` ya existente. El `HELLO` ya rechazaba conexiones con `activo:false` (mecanismo reutilizado, sin cambios); se le agregó un sistema completo de razones de rechazo explícitas (evento `HELLO_RECHAZADO` con `code`+`message`: `MISSING_FIELDS`, `DEVICE_NOT_FOUND`, `PENDING_APPROVAL`, `DEVICE_DISABLED`, `INVALID_TOKEN`, `HARDWARE_MISMATCH`, `INTERNAL_ERROR`) que el kiosko muestra en texto claro en vez del genérico "Sin conexión". Nuevos endpoints `PUT /api/dispositivos/:id/aprobar` y `DELETE /api/dispositivos/:id` (Admin only). `PanelDispositivos.vue` muestra 3 secciones separadas: "⏳ Pendientes de aprobación" (con botones Aprobar/Rechazar), lista normal de dispositivos activos (sin cambios), y "Deshabilitados" (`activo:false` pero fue aprobado antes — hoy vacía, sin botón de deshabilitar implementado todavía).
+
+Bug encontrado y corregido en el camino: al re-registrarse como dispositivo NUEVO (`deviceId` distinto), el estado local `claseActiva` en `data/estado.json` no se limpiaba, arrastrando información de una clase que pertenecía a la identidad anterior. Fix: `store.setClaseActiva(null)` se dispara específicamente en el callback de registro genuinamente nuevo (`yaRegistrado:false`), sin tocar `pendientes.json` ni `plantillas.json` (no dependen de `deviceId`). Verificado con hardware real: registro nuevo → sin clase fantasma → píldora de aprobación correcta → aprobación → conexión normal → rechazo → borrado de BD → restauración del dispositivo original sin problemas.
+
 ## Arranque no bloqueante `[IMPLEMENTADO]`
 
 - `main/index.js`: `createWindow()` y `broadcastStatus()` se ejecutan **antes** de `await engine.init()`; el registro del dispositivo corre en background y no retrasa la aparición de la ventana.
@@ -491,10 +495,12 @@ Huellero → Backend:
 Backend → Dashboard:
   CLASS_ACTIVATED / CLASS_DEACTIVATED [IMPLEMENTADO] { fichaId, instructorId, iniciadaAt }
   ATTENDANCE_REGISTERED               [IMPLEMENTADO] { fichaId, estudianteId, nombres, apellidos, hora, estado }
-  DEVICE_CONNECTED / DEVICE_DISCONNECTED [PENDIENTE] { deviceId, fichas }
+  DEVICE_CONNECTED / DEVICE_DISCONNECTED [IMPLEMENTADO] { deviceId, fichas }
   ENROLL_STARTED / ENROLL_PROGRESS / ENROLL_COMPLETED / ENROLL_FAILED
   SYNC_COMPLETED                      [PENDIENTE] { procesados }
 ```
+
+`[IMPLEMENTADO 2026-09-10]` — `DEVICE_CONNECTED`/`DEVICE_DISCONNECTED` implementados con snapshot inicial (`DEVICES_STATUS` para admins, `DEVICE_STATUS` para la ficha) y guard anti-fantasma en `disconnect` (evita eventos espurios en reconexiones rápidas). Nueva sala `admins` (`unirse_admin`, valida JWT + rol Administrador). `PanelDispositivos.vue` muestra badge "En línea"/"Desconectado" por dispositivo; `PanelInstructor.vue` muestra indicador "🟢/🔴 Lector del aula" junto al botón de iniciar clase. Verificado en vivo: apagar/prender el huellero actualiza ambos paneles en tiempo real sin recargar.
 
 `[PENDIENTE]` — Mecanismo de autenticación del WebSocket del dashboard (actualmente el frontend no usa JWT; guarda `user_data` en `sessionStorage`).
 
@@ -520,7 +526,7 @@ Backend → Dashboard:
 | 9 | Registro de asistencias | ✅ Implementada (2026-09-08) — identificación + registro + sync, verificado con hardware real |
 | 10 | Sincronización offline/online | ✅ Implementada — `sync.js` + `POST /api/asistencias/sync` + `scheduler.js` (00:00 + polling 5 min) |
 | 11 | Pruebas de recuperación y duplicados | `[PENDIENTE]` |
-| 12 | Empaquetado `.exe` | `[PENDIENTE]` |
+| 12 | Empaquetado `.exe` | ✅ Implementada (2026-09-10) — primer `.exe` NSIS con DLLs + driver embebidos |
 
 # Decisiones descartadas
 
@@ -606,6 +612,12 @@ El ciclo completo de toma de asistencia ya funciona de punta a punta y fue verif
 - **Config centralizado de `BIOMETRIC_MATCH_THRESHOLD` en el huellero** `[IMPLEMENTADO 2026-09-10]`: `fingerprint.js` (backend y huellero, byte-idénticos, hash SHA256 confirmado) ahora expone `setMatchThreshold(value)`, sin cambiar ninguna firma existente. El huellero llama a este setter en `engine.init()` con el valor leído de `config.json` (campo `BIOMETRIC_MATCH_THRESHOLD`, default `21474` vía `DEFAULTS` en `config.js`). El backend no llama al setter, así que sigue leyendo su propio `process.env.BIOMETRIC_MATCH_THRESHOLD` del `.env` sin ningún cambio de comportamiento. Verificado con prueba real (valor `25000` aplicado y confirmado por log).
 - **Flujo Web SDK del navegador** (si llega a reactivarse): verificar su propio mismatch de DPI (no investigado). `[PENDIENTE]`
 
-## 6. Empaquetado final `[PENDIENTE]`
+## 6. Empaquetado final `[IMPLEMENTADO]`
 
 - Fase 12 (`.exe`): no intentar hasta que todo lo anterior funcione como app Node/Electron independiente.
+
+`[IMPLEMENTADO 2026-09-10]` — Primer instalador `.exe` generado exitosamente (electron-builder + NSIS, `oneClick:false` + `perMachine:true`). Incluye: las 8 DLLs de DigitalPersona vía `extraResources`, y los dos instaladores del driver U.are.U 4500 (HID Global v4.1.0.217, `setup-x64.msi`/`setup-x86.msi`) embebidos en `build/installer.nsh`, ejecutados silenciosamente (`msiexec /qn /norestart`) solo en instalación limpia y solo si el driver no está ya instalado (chequeo vía registro MSI, `SetRegView 64`).
+
+Bug crítico encontrado y corregido en el camino: el bootstrap de carga de DLLs (anotado como riesgo desde la Fase 1) efectivamente fallaba en la app empaquetada — intentaba cargar desde dentro del `.asar` (imposible, `LoadLibrary` no puede leer ahí) y solo "funcionaba" en el PC de desarrollo por un fallback casual al SDK completo instalado. Fix: nueva entrada con `process.resourcesPath` (API de Electron, `undefined` en el backend, preserva byte-identidad confirmada por SHA256) antepuesta a los demás fallbacks en `fingerprint.js` y `capture.js`. Verificado con logs reales: la app instalada ahora carga `dpfj.dll`/`dpfpdd.dll` desde `resources/dll/`, no desde el fallback del SDK.
+
+Pendiente real antes de producción (no verificado aún, requiere PC limpio real): confirmar que el instalador del driver embebido (`setup-x64.msi` vía `customInstall`) efectivamente instala el driver USB en un PC SIN el SDK/driver preexistente, y que el lector es enumerado por Windows correctamente después. Esta prueba no se pudo hacer hoy porque el único PC disponible ya tenía el driver instalado (lo cual habría sido enmascarado por el chequeo de "ya instalado").

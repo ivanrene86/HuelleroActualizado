@@ -24,6 +24,7 @@ import { obtenerHardwareFingerprint } from './hardware-fingerprint.js'
 let socket = null
 let connected = false
 let currentConfig = null
+let ultimoRechazo = null // { code, message, at } del último HELLO_RECHAZADO
 
 const activateHandlers = []
 const deactivateHandlers = []
@@ -141,12 +142,26 @@ export function connect(config) {
     logError('Error de conexión:', err.message)
   })
 
+  // El backend rechazó el HELLO (aprobación pendiente, token inválido, etc.).
+  // Guardamos la razón para mostrarla en el kiosko en vez del genérico "Sin conexión".
+  socket.on('HELLO_RECHAZADO', (data) => {
+    ultimoRechazo = {
+      code: data?.code || 'UNKNOWN',
+      message: data?.message || 'Conexión rechazada por el servidor.',
+      at: Date.now(),
+    }
+    log('HELLO rechazado:', ultimoRechazo.code, '-', ultimoRechazo.message)
+    setConnected(false)
+  })
+
   socket.on('ACTIVATE', (payload) => {
+    ultimoRechazo = null // HELLO aceptado (la reconciliación siempre responde)
     log('ACTIVATE recibido:', payload)
     despachar(activateHandlers, payload, 'onActivate')
   })
 
   socket.on('DEACTIVATE', (payload) => {
+    ultimoRechazo = null // HELLO aceptado (la reconciliación siempre responde)
     log('DEACTIVATE recibido:', payload)
     despachar(deactivateHandlers, payload, 'onDeactivate')
   })
@@ -158,6 +173,14 @@ export function connect(config) {
  */
 export function isConnected() {
   return connected
+}
+
+/**
+ * Último rechazo del HELLO, o null si la última conexión fue aceptada.
+ * @returns {{ code: string, message: string, at: number } | null}
+ */
+export function getUltimoRechazo() {
+  return ultimoRechazo
 }
 
 /**
@@ -220,6 +243,7 @@ export function send(type, payload) {
 const wsClient = {
   connect,
   isConnected,
+  getUltimoRechazo,
   onActivate,
   onDeactivate,
   onConnectionChange,

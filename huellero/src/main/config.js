@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import os from 'os'
 import { obtenerHardwareFingerprint } from './hardware-fingerprint.js'
 
 const CONFIG_PATH = resolve(process.cwd(), 'config.json')
@@ -48,7 +49,7 @@ export async function registrarDispositivoSiNoExiste() {
     res = await fetch(`${config.backendUrl}/api/dispositivos/registrar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hardwareFingerprint: obtenerHardwareFingerprint() }),
+      body: JSON.stringify({ hardwareFingerprint: obtenerHardwareFingerprint(), hostname: os.hostname() }),
       signal: AbortSignal.timeout(10000),
     })
   } catch {

@@ -11,6 +11,45 @@ let io = null
 const sesionesActivas = new Map() // fichaId -> { activa: true, iniciadoPor, fecha, jornada, fichaCodigo, nombrePrograma }
 const dispositivosConectados = new Map() // deviceId -> socket.id
 
+// Devuelve los _id (string) de las fichas asociadas a un Dispositivo (por su _id Mongo).
+async function idsDeFichasAsociadas(dispositivoMongoId) {
+  try {
+    const fichas = await Ficha.find({ dispositivoId: dispositivoMongoId }).select('_id')
+    return fichas.map((f) => String(f._id))
+  } catch {
+    return []
+  }
+}
+
+// Emite DEVICE_CONNECTED/DEVICE_DISCONNECTED a la sala de admins y a cada
+// sala ficha_<id> de las fichas asociadas a ese dispositivo.
+function emitirEstadoDispositivo(evento, deviceId, fichasIds) {
+  if (!io) return
+  io.to('admins').emit(evento, { deviceId })
+  for (const fichaId of fichasIds) {
+    io.to(`ficha_${fichaId}`).emit(evento, { deviceId })
+  }
+}
+
+// Resuelve el deviceId (UUID) del dispositivo asociado a una ficha, o null.
+async function deviceIdDeFicha(fichaId) {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(String(fichaId))) return null
+    const ficha = await Ficha.findById(fichaId).select('dispositivoId')
+    if (!ficha?.dispositivoId) return null
+    const disp = await Dispositivo.findById(ficha.dispositivoId).select('deviceId')
+    return disp?.deviceId ? String(disp.deviceId) : null
+  } catch {
+    return null
+  }
+}
+
+// Informa al huellero la razón del rechazo del HELLO y luego desconecta.
+function rechazarHELLO(socket, code, message) {
+  socket.emit('HELLO_RECHAZADO', { code, message })
+  socket.disconnect(true)
+}
+
 export function initSocket(httpServer) {
   // Heartbeat: se depende del heartbeat nativo de socket.io (pingInterval 25s / pingTimeout 20s por defecto),
   // que detecta desconexiones y reconexiones automáticamente. No se implementa un PING/PONG manual encima.
@@ -73,16 +112,40 @@ export function initSocket(httpServer) {
         activa: !!sesion?.activa,
         sesion: sesion || null,
       })
+
+      // Snapshot inicial del estado online del dispositivo asociado a esta ficha
+      // (para que el instructor vea el indicador correcto al entrar, sin esperar
+      // al próximo DEVICE_CONNECTED/DISCONNECTED).
+      try {
+        const deviceId = await deviceIdDeFicha(fichaId)
+        if (deviceId) {
+          socket.emit('DEVICE_STATUS', { deviceId, online: dispositivosConectados.has(deviceId) })
+        }
+      } catch (_) {}
     })
 
-    // 2. Salir de la sala
+    // 2. Unirse a la sala global de administradores (DEVICE_CONNECTED/DISCONNECTED)
+    socket.on('unirse_admin', () => {
+      const usuario = verificarTokenJWT(socket.handshake?.auth?.token)
+      if (!usuario || usuario.rol !== 'Administrador') {
+        socket.emit('error_autenticacion', { error: 'Se requiere una sesión de Administrador válida.' })
+        return
+      }
+      socket.join('admins')
+      console.log(`[Socket.IO] Socket ${socket.id} (Administrador) se unió a sala admins`)
+
+      // Snapshot inicial: dispositivos conectados en este momento.
+      socket.emit('DEVICES_STATUS', { deviceIds: Array.from(dispositivosConectados.keys()) })
+    })
+
+    // 3. Salir de la sala
     socket.on('salir_sala', ({ fichaId }) => {
       if (!fichaId) return
       const room = `ficha_${fichaId}`
       socket.leave(room)
     })
 
-    // 3. El docente inicia la sesión de toma de asistencia de forma remota
+    // 4. El docente inicia la sesión de toma de asistencia de forma remota
     socket.on('docente:iniciar_asistencia', (data) => {
       const { fichaId, fichaCodigo, nombrePrograma, jornada, fecha, instructorNombre } = data
       if (!fichaId) return
@@ -110,7 +173,7 @@ export function initSocket(httpServer) {
       io.to(room).emit('estado_sesion', { activa: true, sesion })
     })
 
-    // 4. El docente finaliza/pausa la toma de asistencia
+    // 5. El docente finaliza/pausa la toma de asistencia
     socket.on('docente:cerrar_asistencia', ({ fichaId }) => {
       if (!fichaId) return
       const room = `ficha_${fichaId}`
@@ -124,29 +187,40 @@ export function initSocket(httpServer) {
       io.to(room).emit('estado_sesion', { activa: false, sesion: null })
     })
 
-    // 5. Registro de identidad del huellero local (deviceId + token) al conectar
+    // 6. Registro de identidad del huellero local (deviceId + token) al conectar
     socket.on('HELLO', async (data) => {
       const deviceId = data?.deviceId
       const token = data?.token
       if (!deviceId || !token) {
         console.log(`[Socket.IO] HELLO rechazado: faltan deviceId o token (socket ${socket.id})`)
-        socket.disconnect(true)
+        rechazarHELLO(socket, 'MISSING_FIELDS', 'Faltan credenciales del dispositivo.')
         return
       }
 
       try {
         const dispositivo = await Dispositivo.findOne({ deviceId: String(deviceId) })
 
-        if (!dispositivo || dispositivo.activo !== true) {
-          console.log(`[Socket.IO] HELLO rechazado: dispositivo no encontrado o inactivo (${deviceId}, socket ${socket.id})`)
-          socket.disconnect(true)
+        if (!dispositivo) {
+          console.log(`[Socket.IO] HELLO rechazado: dispositivo no encontrado (${deviceId}, socket ${socket.id})`)
+          rechazarHELLO(socket, 'DEVICE_NOT_FOUND', 'Dispositivo no reconocido por el sistema.')
+          return
+        }
+
+        if (dispositivo.activo !== true) {
+          if (!dispositivo.aprobadoEn) {
+            console.log(`[Socket.IO] HELLO rechazado: dispositivo pendiente de aprobación (${deviceId}, socket ${socket.id})`)
+            rechazarHELLO(socket, 'PENDING_APPROVAL', 'Equipo registrado. Esperando aprobación del administrador.')
+          } else {
+            console.log(`[Socket.IO] HELLO rechazado: dispositivo deshabilitado (${deviceId}, socket ${socket.id})`)
+            rechazarHELLO(socket, 'DEVICE_DISABLED', 'Este equipo fue deshabilitado por el administrador.')
+          }
           return
         }
 
         const tokenValido = await bcryptjs.compare(token, dispositivo.tokenHash)
         if (!tokenValido) {
           console.log(`[Socket.IO] HELLO rechazado: token inválido para ${deviceId} (socket ${socket.id})`)
-          socket.disconnect(true)
+          rechazarHELLO(socket, 'INVALID_TOKEN', 'Credenciales del dispositivo inválidas.')
           return
         }
 
@@ -164,7 +238,7 @@ export function initSocket(httpServer) {
             console.log(`[Socket.IO] Fingerprint de hardware adoptado para ${deviceId}`)
           } else if (dispositivo.hardwareFingerprintHash !== fpHash) {
             console.log(`[Socket.IO] HELLO rechazado: fingerprint de hardware no coincide para ${deviceId} (posible copia de identidad)`)
-            socket.disconnect(true)
+            rechazarHELLO(socket, 'HARDWARE_MISMATCH', 'La identidad de hardware no coincide. Posible copia no autorizada. Contacta al administrador.')
             return
           }
         }
@@ -172,6 +246,14 @@ export function initSocket(httpServer) {
         socket.data.deviceId = String(deviceId)
         dispositivosConectados.set(String(deviceId), socket.id)
         console.log(`[Socket.IO] Huellero registrado: ${deviceId} (socket ${socket.id})`)
+
+        // Notificar conexión del dispositivo a admins y a las fichas asociadas.
+        try {
+          const fichasIds = await idsDeFichasAsociadas(dispositivo._id)
+          emitirEstadoDispositivo('DEVICE_CONNECTED', String(deviceId), fichasIds)
+        } catch (err) {
+          console.log(`[Socket.IO] Error emitiendo DEVICE_CONNECTED para ${deviceId}: ${err.message}`)
+        }
 
         // Reconciliación del estado real tras autenticar (Fase 6):
         // se reenvía al dispositivo el estado que tiene en BD, haya o no clase activa.
@@ -208,11 +290,11 @@ export function initSocket(httpServer) {
         }
       } catch (err) {
         console.log(`[Socket.IO] HELLO rechazado por error: ${deviceId} (socket ${socket.id}) - ${err.message}`)
-        socket.disconnect(true)
+        rechazarHELLO(socket, 'INTERNAL_ERROR', 'Error interno al verificar el dispositivo.')
       }
     })
 
-    // 6. El Kiosco registra una huella y notifica en vivo a todos (móvil del docente)
+    // 7. El Kiosco registra una huella y notifica en vivo a todos (móvil del docente)
     socket.on('kiosco:asistencia_marcada', (data) => {
       const { fichaId } = data
       if (!fichaId) return
@@ -224,9 +306,26 @@ export function initSocket(httpServer) {
       socket.to(room).emit('docente:nueva_marcacion', data)
     })
 
-    socket.on('disconnect', () => {
-      if (socket.data.deviceId) {
-        dispositivosConectados.delete(String(socket.data.deviceId))
+    socket.on('disconnect', async () => {
+      const deviceId = socket.data.deviceId ? String(socket.data.deviceId) : null
+      if (!deviceId) {
+        console.log(`[Socket.IO] Cliente desconectado: ${socket.id}`)
+        return
+      }
+
+      // Guard anti-fantasma: solo emitir DEVICE_DISCONNECTED si este socket sigue
+      // siendo el registrado para ese deviceId. Si ya fue reemplazado por una
+      // reconexión más nueva (el Map apunta a otro socket.id), NO se emite nada.
+      if (dispositivosConectados.get(deviceId) === socket.id) {
+        dispositivosConectados.delete(deviceId)
+
+        try {
+          const dispositivo = await Dispositivo.findOne({ deviceId }).select('_id')
+          const fichasIds = dispositivo ? await idsDeFichasAsociadas(dispositivo._id) : []
+          emitirEstadoDispositivo('DEVICE_DISCONNECTED', deviceId, fichasIds)
+        } catch (err) {
+          console.log(`[Socket.IO] Error emitiendo DEVICE_DISCONNECTED para ${deviceId}: ${err.message}`)
+        }
       }
       console.log(`[Socket.IO] Cliente desconectado: ${socket.id}`)
     })

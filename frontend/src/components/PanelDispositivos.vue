@@ -1,6 +1,7 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import api from '../services/api.js'
+import { socket } from '../services/socket.js'
 
 const dispositivos = ref([])
 const fichas = ref([])
@@ -9,6 +10,19 @@ const loading = ref(false)
 const savingId = ref(null)
 const toast = ref({ show: false, message: '', type: '' })
 
+// Estado online por deviceId (UUID), alimentado por DEVICE_CONNECTED/DISCONNECTED.
+const onlineMap = reactive({})
+
+const pendientes = computed(() =>
+  dispositivos.value.filter((d) => d.activo === false && !d.aprobadoEn)
+)
+const activos = computed(() =>
+  dispositivos.value.filter((d) => d.activo === true)
+)
+const deshabilitados = computed(() =>
+  dispositivos.value.filter((d) => d.activo === false && !!d.aprobadoEn)
+)
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -16,7 +30,46 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+
+  socket.on('connect', unirseAdmin)
+  if (socket.connected) unirseAdmin()
+  socket.on('DEVICES_STATUS', onDevicesStatus)
+  socket.on('DEVICE_CONNECTED', onDeviceConnected)
+  socket.on('DEVICE_DISCONNECTED', onDeviceDisconnected)
 })
+
+onUnmounted(() => {
+  socket.off('connect', unirseAdmin)
+  socket.off('DEVICES_STATUS', onDevicesStatus)
+  socket.off('DEVICE_CONNECTED', onDeviceConnected)
+  socket.off('DEVICE_DISCONNECTED', onDeviceDisconnected)
+})
+
+function esAdmin() {
+  try {
+    const raw = sessionStorage.getItem('user_data')
+    return raw ? JSON.parse(raw)?.rol === 'Administrador' : false
+  } catch {
+    return false
+  }
+}
+
+function unirseAdmin() {
+  if (esAdmin()) socket.emit('unirse_admin')
+}
+
+function onDevicesStatus(data) {
+  const ids = Array.isArray(data?.deviceIds) ? data.deviceIds : []
+  for (const id of ids) onlineMap[id] = true
+}
+
+function onDeviceConnected(data) {
+  if (data?.deviceId) onlineMap[data.deviceId] = true
+}
+
+function onDeviceDisconnected(data) {
+  if (data?.deviceId) onlineMap[data.deviceId] = false
+}
 
 async function loadDispositivos() {
   const data = await api.dispositivos.listar()
@@ -81,6 +134,44 @@ async function resetFingerprint(device) {
     savingId.value = null
   }
 }
+
+async function aprobarDispositivo(device) {
+  savingId.value = device._id
+  try {
+    await api.dispositivos.aprobar(device._id)
+    showToast('Dispositivo aprobado')
+    await loadDispositivos()
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'No se pudo aprobar'), 'error')
+  } finally {
+    savingId.value = null
+  }
+}
+
+async function rechazarDispositivo(device) {
+  if (!confirm(`¿Rechazar y eliminar "${deviceLabel(device)}"?\n\nEsta acción es permanente y borra el dispositivo.`)) {
+    return
+  }
+  savingId.value = device._id
+  try {
+    await api.dispositivos.eliminar(device._id)
+    showToast('Dispositivo rechazado y eliminado')
+    await loadDispositivos()
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'No se pudo rechazar'), 'error')
+  } finally {
+    savingId.value = null
+  }
+}
+
+function formatFecha(iso) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })
+  } catch {
+    return iso
+  }
+}
 </script>
 
 <template>
@@ -95,25 +186,52 @@ async function resetFingerprint(device) {
     <p>No hay dispositivos registrados todavía. La app del huellero se registra automáticamente al iniciar.</p>
   </div>
 
-  <div v-else class="dispositivos-list">
-    <div v-for="d in dispositivos" :key="d._id" class="card">
-      <div class="card-header">
-        <div>
-          <h3>{{ deviceLabel(d) }}</h3>
-          <span class="device-id">{{ d.nombre ? d.deviceId : '' }}</span>
-          <span class="badge" :class="d.activo ? 'badge-success' : 'badge-danger'">
-            {{ d.activo ? 'Activo' : 'Inactivo' }}
-          </span>
-        </div>
-        <div class="card-actions">
-          <button class="btn btn-primary btn-sm" :disabled="savingId === d._id" @click="guardar(d)">
-            {{ savingId === d._id ? 'Guardando…' : '💾 Guardar' }}
-          </button>
-          <button class="btn btn-sm btn-reset" :disabled="savingId === d._id" @click="resetFingerprint(d)">
-            🔄 Resetear identidad de hardware
-          </button>
+  <div v-else>
+    <!-- Pendientes de aprobación -->
+    <div v-if="pendientes.length > 0" class="pendientes-section">
+      <h2 class="pendientes-title">⏳ Pendientes de aprobación</h2>
+      <div v-for="d in pendientes" :key="d._id" class="card card-pendiente">
+        <div class="card-header">
+          <div>
+            <h3>{{ d.hostname || deviceLabel(d) }}</h3>
+            <span class="device-id">{{ d.deviceId }}</span>
+            <span class="muted">Registrado: {{ formatFecha(d.createdAt) }}</span>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-success btn-sm" :disabled="savingId === d._id" @click="aprobarDispositivo(d)">
+              ✅ Aprobar
+            </button>
+            <button class="btn btn-danger btn-sm" :disabled="savingId === d._id" @click="rechazarDispositivo(d)">
+              ❌ Rechazar
+            </button>
+          </div>
         </div>
       </div>
+    </div>
+
+    <div class="dispositivos-list">
+      <div v-for="d in activos" :key="d._id" class="card">
+        <div class="card-header">
+          <div>
+            <h3>{{ deviceLabel(d) }}</h3>
+            <span class="device-id">{{ d.nombre ? d.deviceId : '' }}</span>
+            <span v-if="d.hostname" class="muted">{{ d.hostname }}</span>
+            <span class="badge" :class="d.activo ? 'badge-success' : 'badge-danger'">
+              {{ d.activo ? 'Activo' : 'Inactivo' }}
+            </span>
+            <span class="badge" :class="onlineMap[d.deviceId] ? 'badge-online' : 'badge-offline'">
+              {{ onlineMap[d.deviceId] ? '● En línea' : '○ Desconectado' }}
+            </span>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-primary btn-sm" :disabled="savingId === d._id" @click="guardar(d)">
+              {{ savingId === d._id ? 'Guardando…' : '💾 Guardar' }}
+            </button>
+            <button class="btn btn-sm btn-reset" :disabled="savingId === d._id" @click="resetFingerprint(d)">
+              🔄 Resetear identidad de hardware
+            </button>
+          </div>
+        </div>
 
       <div class="fichas-asociadas">
         <strong>Fichas asociadas:</strong>
@@ -146,12 +264,54 @@ async function resetFingerprint(device) {
         </label>
       </div>
     </div>
+    </div>
+
+    <!-- Deshabilitados (aprobados antes, luego inactivos) -->
+    <div v-if="deshabilitados.length > 0" class="pendientes-section">
+      <h2 class="deshabilitados-title">Deshabilitados</h2>
+      <div v-for="d in deshabilitados" :key="d._id" class="card card-deshabilitado">
+        <div class="card-header">
+          <div>
+            <h3>{{ d.hostname || deviceLabel(d) }}</h3>
+            <span class="device-id">{{ d.deviceId }}</span>
+            <span class="badge badge-danger">Inactivo</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div v-if="toast.show" class="toast" :class="'toast-' + toast.type">{{ toast.message }}</div>
 </template>
 
 <style scoped>
+.pendientes-section {
+  margin-bottom: 24px;
+}
+
+.pendientes-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #b45309;
+  margin-bottom: 12px;
+}
+
+.card-pendiente {
+  border-left: 4px solid #f59e0b;
+}
+
+.deshabilitados-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 12px;
+}
+
+.card-deshabilitado {
+  opacity: 0.7;
+  border-left: 4px solid #64748b;
+}
+
 .dispositivos-list {
   display: flex;
   flex-direction: column;
@@ -237,5 +397,15 @@ async function resetFingerprint(device) {
 .move-hint.move-active {
   color: #b45309;
   font-weight: 600;
+}
+
+.badge-online {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.badge-offline {
+  background: #f3f4f6;
+  color: #6b7280;
 }
 </style>

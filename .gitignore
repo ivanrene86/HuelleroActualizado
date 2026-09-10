@@ -30,3 +30,7 @@ dist-ssr
 *.db
 backend/data/*
 !backend/data/.gitkeep
+
+# Huellero (Electron) build artifacts
+huellero/out/
+huellero/release/

@@ -44,6 +44,7 @@ try {
 
 const searchPaths = [
   path.join(dllFolder, 'dpfj.dll'),
+  ...(process.resourcesPath ? [path.join(process.resourcesPath, 'dll', 'dpfj.dll')] : []),
   './dll/dpfj.dll',
   'dpfj.dll',
   'C:/Windows/System32/dpfj.dll',

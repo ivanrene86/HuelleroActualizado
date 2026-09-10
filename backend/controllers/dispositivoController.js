@@ -6,7 +6,7 @@ import Ficha from '../models/Ficha.js'
 
 export async function registrar(req, res) {
   try {
-    const { nombre, hardwareFingerprint } = req.body
+    const { nombre, hardwareFingerprint, hostname } = req.body
 
     const deviceId = crypto.randomUUID()
     const token = crypto.randomBytes(32).toString('hex')
@@ -18,12 +18,16 @@ export async function registrar(req, res) {
       ? crypto.createHash('sha256').update(String(hardwareFingerprint)).digest('hex')
       : null
 
+    // Los dispositivos se registran como PENDIENTES de aprobación:
+    // activo=false y aprobadoEn=null hasta que el Admin los apruebe.
     await Dispositivo.create({
       deviceId,
       tokenHash,
       hardwareFingerprintHash,
+      hostname: hostname || null,
       nombre: nombre || '',
-      activo: true,
+      activo: false,
+      aprobadoEn: null,
     })
 
     // Este es el ÚNICO momento en que el token viaja en texto plano:
@@ -106,6 +110,41 @@ export async function resetFingerprint(req, res) {
     await dispositivo.save()
 
     res.json({ ok: true, message: 'Identidad de hardware reseteada. El dispositivo la re-adoptará en su próxima conexión.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+export async function aprobar(req, res) {
+  try {
+    const { id } = req.params
+    const dispositivo = await Dispositivo.findById(id)
+    if (!dispositivo) {
+      return res.status(404).json({ error: 'Dispositivo no encontrado' })
+    }
+
+    dispositivo.activo = true
+    dispositivo.aprobadoEn = new Date()
+    await dispositivo.save()
+
+    res.json({ ok: true, message: 'Dispositivo aprobado.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+export async function eliminar(req, res) {
+  try {
+    const { id } = req.params
+    const dispositivo = await Dispositivo.findById(id)
+    if (!dispositivo) {
+      return res.status(404).json({ error: 'Dispositivo no encontrado' })
+    }
+
+    // Rechazar = eliminar el documento completo (el dispositivo podrá re-registrarse).
+    await Dispositivo.deleteOne({ _id: id })
+
+    res.json({ ok: true, message: 'Dispositivo rechazado y eliminado.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

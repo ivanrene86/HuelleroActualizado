@@ -77,6 +77,10 @@ export async function init() {
   wsClient.connect(getConfig())
   syncPendientes()
   iniciarRegistroDispositivo(() => {
+    // Registro GENUINAMENTE NUEVO (deviceId+token frescos): el estado local de
+    // claseActiva pertenecía a una identidad anterior ya inválida. Se limpia antes
+    // de conectar, sin tocar pendientes.json ni plantillas.json (no dependen de deviceId).
+    store.setClaseActiva(null)
     wsClient.connect(getConfig())
     notificarEstado()
   })
@@ -87,6 +91,7 @@ export function getStatus() {
     online: wsClient.isConnected(),
     claseActiva: store.getClaseActiva() || null,
     dispositivoRegistrado: tieneIdentidad(),
+    ultimoRechazo: wsClient.getUltimoRechazo(),
     docente: docente
       ? {
           correo: docente.correo,
