@@ -26,7 +26,7 @@ let pollingActivo = false
 let syncing = false
 let iniciado = false
 
-async function sincronizar() {
+export async function sincronizar() {
   if (syncing) return
   syncing = true
   try {

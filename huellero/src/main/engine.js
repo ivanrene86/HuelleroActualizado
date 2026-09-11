@@ -3,8 +3,7 @@ import { getConfig, iniciarRegistroDispositivo, tieneIdentidad } from './config.
 import * as store from './store.js'
 import wsClient from './ws-client.js'
 import { capturarHuella, inicializarCaptura } from './capture.js'
-import { syncPendientes } from './sync.js'
-import { notificarPendienteNuevo } from './scheduler.js'
+import { notificarPendienteNuevo, sincronizar } from './scheduler.js'
 import { identificarEstudiante } from '../verify.js'
 import * as fingerprint from '../fingerprint.js'
 
@@ -75,7 +74,7 @@ export async function init() {
     notificarEstado()
   })
   wsClient.connect(getConfig())
-  syncPendientes()
+  sincronizar()
   iniciarRegistroDispositivo(() => {
     // Registro GENUINAMENTE NUEVO (deviceId+token frescos): el estado local de
     // claseActiva pertenecía a una identidad anterior ya inválida. Se limpia antes

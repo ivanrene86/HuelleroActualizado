@@ -527,8 +527,19 @@ Backend → Dashboard:
 | 8 | Enrolamiento remoto | ✅ Implementada — enrolamiento **local** desde la app (supera el flujo remoto por WebSocket) |
 | 9 | Registro de asistencias | ✅ Implementada (2026-09-08) — identificación + registro + sync, verificado con hardware real |
 | 10 | Sincronización offline/online | ✅ Implementada — `sync.js` + `POST /api/asistencias/sync` + `scheduler.js` (00:00 + polling 5 min) |
-| 11 | Pruebas de recuperación y duplicados | `[PENDIENTE]` |
+| 11 | Pruebas de recuperación y duplicados | ✅ Implementada — ver `[VERIFICADO 2026-09-10]` abajo |
 | 12 | Empaquetado `.exe` | ✅ Implementada (2026-09-10) — primer `.exe` NSIS con DLLs + driver embebidos |
+
+`[VERIFICADO 2026-09-10]` — Las 5 pruebas formales de recuperación y duplicados se ejecutaron con hardware real y evidencia de logs verificada:
+
+1. Pérdida de conexión durante marcación: identificación funciona con plantillas cacheadas sin backend; asistencia se guarda local (`pendientes.json`) sin error visible al usuario.
+2. Recuperación automática al reconectar: sincroniza de inmediato al reconectar el WebSocket, sin intervención manual.
+3a. Reenvío del mismo `uuid` (retry de red simulado): detectado como duplicado por el índice único de `uuid`, sin crear un segundo documento.
+3b. Mismo estudiante/ficha/día con `uuid` distinto (fuera de la ventana de dedup local de 2 min): detectado como duplicado por el índice compuesto `{estudianteId, fichaId, fecha}`, confirmando "primer registro manda".
+4. Reinicio completo de la app con pendientes sin sincronizar (backend caído): `pendientes.json` sobrevive el reinicio íntegro; sincroniza correctamente al reconectar.
+5. Backend caído 10-12 minutos: polling periódico (cada 5 min) reintenta sin rendirse nunca, `pendientes.json` intacto durante toda la caída; recuperación automática total al restaurar el backend.
+
+Bug menor encontrado y corregido en el camino: el boot (`engine.init()`) llamaba `syncPendientes()` directo en vez de pasar por `sincronizar()` de `scheduler.js`, por lo que si el backend estaba caído desde el arranque de la app, el polling automático no se activaba (solo lo hubiera activado una reconexión WS, un pendiente nuevo, o medianoche). Corregido: el boot ahora usa `sincronizar()`, unificando todos los disparadores por el mismo camino.
 
 # Decisiones descartadas
 
