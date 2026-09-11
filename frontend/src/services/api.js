@@ -27,10 +27,16 @@ async function request(url, options = {}) {
     }
   }
 
-  const res = await fetch(`${BASE}${url}`, {
-    ...options,
-    headers,
-  })
+  let res
+  try {
+    res = await fetch(`${BASE}${url}`, {
+      ...options,
+      headers,
+    })
+  } catch (err) {
+    // Error de red (servidor inaccesible, DNS, timeout): NO es un error de credenciales.
+    throw new Error('Sin conexión: no se pudo contactar el servidor')
+  }
 
   const data = await res.json().catch(() => ({}))
 

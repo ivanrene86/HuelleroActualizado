@@ -34,3 +34,6 @@ backend/data/*
 # Huellero (Electron) build artifacts
 huellero/out/
 huellero/release/
+
+# Config local del dispositivo (contiene deviceId + token)
+huellero/config.json

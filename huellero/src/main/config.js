@@ -8,8 +8,8 @@ const CONFIG_PATH = resolve(process.cwd(), 'config.json')
 const DEFAULTS = {
   deviceId: null,
   token: null,
-  backendUrl: process.env.HUELLERO_BACKEND_URL || 'http://localhost:3000',
-  wsUrl: process.env.HUELLERO_WS_URL || 'ws://localhost:3000',
+  backendUrl: process.env.HUELLERO_BACKEND_URL || 'http://127.0.0.1:3000',
+  wsUrl: process.env.HUELLERO_WS_URL || 'ws://127.0.0.1:3000',
   BIOMETRIC_MATCH_THRESHOLD: 21474,
 }
 
