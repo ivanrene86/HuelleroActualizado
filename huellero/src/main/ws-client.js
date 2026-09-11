@@ -31,6 +31,48 @@ const deactivateHandlers = []
 const connectionChangeHandlers = []
 
 // ---------------------------------------------------------------------------
+// Reintento manual tras "io server disconnect"
+// ---------------------------------------------------------------------------
+// socket.io NO reconecta automáticamente cuando la desconexión la inicia el
+// servidor (reason === "io server disconnect"). El backend hace
+// socket.disconnect(true) al rechazar un HELLO (PENDING_APPROVAL,
+// INVALID_TOKEN, HARDWARE_MISMATCH, ...), así que el socket queda inactivo
+// (socket.active === false) y la app se queda "muerta" hasta un reinicio.
+// Aquí programamos la reconexión manualmente (socket.connect()) con backoff.
+const RECONEXION_DELAY_BASE = 2000
+const RECONEXION_DELAY_MAX = 60000
+// Para HARDWARE_MISMATCH (posible copia de identidad) el problema probablemente
+// no se resuelve solo; reintentamos con un intervalo fijo mucho más largo para
+// no saturar el backend con intentos inútiles.
+const RECONEXION_HARDWARE_MISMATCH = 10 * 60 * 1000 // 10 minutos
+
+let reintentoManualTimer = null
+let reintentoManualDelay = RECONEXION_DELAY_BASE
+
+function cancelarReintentoManual() {
+  if (reintentoManualTimer) {
+    clearTimeout(reintentoManualTimer)
+    reintentoManualTimer = null
+  }
+}
+
+function programarReintentoManual() {
+  if (!socket || reintentoManualTimer) return
+  const esHardwareMismatch = ultimoRechazo?.code === 'HARDWARE_MISMATCH'
+  const delay = esHardwareMismatch ? RECONEXION_HARDWARE_MISMATCH : reintentoManualDelay
+  log(`Reintentando conexión en ${delay}ms (motivo: ${ultimoRechazo?.code || 'server disconnect'})`)
+  reintentoManualTimer = setTimeout(() => {
+    reintentoManualTimer = null
+    if (socket) socket.connect()
+  }, delay)
+  // El backoff exponencial solo crece para rechazos recuperables; para
+  // HARDWARE_MISMATCH usamos el intervalo fijo definido arriba.
+  if (!esHardwareMismatch) {
+    reintentoManualDelay = Math.min(reintentoManualDelay * 2, RECONEXION_DELAY_MAX)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Utilidades internas
 // ---------------------------------------------------------------------------
 function log(...args) {
@@ -90,6 +132,11 @@ function despachar(handlers, payload, evento) {
 export function connect(config) {
   currentConfig = config || {}
 
+  // Se crea un socket nuevo: limpia cualquier reintento manual pendiente y
+  // reinicia el backoff.
+  cancelarReintentoManual()
+  reintentoManualDelay = RECONEXION_DELAY_BASE
+
   const { deviceId, token, wsUrl, backendUrl } = currentConfig
 
   if (!deviceId || !token) {
@@ -136,6 +183,17 @@ export function connect(config) {
   socket.on('disconnect', (reason) => {
     log(`Desconectado (${reason})`)
     setConnected(false)
+    // "io server disconnect" significa que el servidor cerró la conexión
+    // (p.ej. HELLO rechazado). socket.io NO reintenta solo en este caso,
+    // así que lo programamos manualmente.
+    if (reason === 'io server disconnect') {
+      programarReintentoManual()
+    } else {
+      // Para el resto de razones (transport close, ping timeout, ...) socket.io
+      // reconecta automáticamente; solo limpiamos cualquier reintento manual
+      // pendiente para no duplicar intentos.
+      cancelarReintentoManual()
+    }
   })
 
   socket.on('connect_error', (err) => {
@@ -156,12 +214,14 @@ export function connect(config) {
 
   socket.on('ACTIVATE', (payload) => {
     ultimoRechazo = null // HELLO aceptado (la reconciliación siempre responde)
+    reintentoManualDelay = RECONEXION_DELAY_BASE // reinicia backoff manual
     log('ACTIVATE recibido:', payload)
     despachar(activateHandlers, payload, 'onActivate')
   })
 
   socket.on('DEACTIVATE', (payload) => {
     ultimoRechazo = null // HELLO aceptado (la reconciliación siempre responde)
+    reintentoManualDelay = RECONEXION_DELAY_BASE // reinicia backoff manual
     log('DEACTIVATE recibido:', payload)
     despachar(deactivateHandlers, payload, 'onDeactivate')
   })
