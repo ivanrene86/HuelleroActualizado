@@ -245,6 +245,8 @@ Huellero → Backend:
 >
 > **Nota técnica relacionada:** este flujo usa el mismo hardware físico (U.are.U 4500, 700 DPI nativo confirmado vía `dpfpdd_get_device_capabilities`) que el huellero, y llama a la misma función `pngToFmd()` con el default `dpi=500` sin pasar el valor real. Si en algún momento se decide reactivar este flujo del navegador, debe evaluarse si el Web SDK (`Fingerprint.WebApi`) entrega las imágenes ya normalizadas a 500 DPI internamente (en cuyo caso el default actual sería correcto) o si arrastra el mismo mismatch de DPI que se corrigió para el huellero (en cuyo caso habría que pasar el DPI real ahí también). Esto **NO se investigó todavía** — queda como `[PENDIENTE]` si el flujo llega a reactivarse en el futuro.
 
+`[RESUELTO 2026-09-11]` — Limpieza adicional de PanelInstructor.vue: se removieron el botón "Iniciar/Detener Biometría" (junto a Tomar Asistencia) y la pestaña completa "Enrolar Huellas" (con su tabla, modal, y la llamada initFingerprintSDK() en onMounted) — ambos dependían del Web SDK del navegador (Fingerprint.WebApi), ya confirmado inactivo en producción. El enrolamiento real ocurre en EnrolarHuellaModal.vue (huellero Electron). Endpoints backend identificados como huérfanos tras esto (no tocados, solo reportados): /estudiantes/enroll-start, enroll-capture, enroll-complete, enroll-cancel, verify, fingerprint-status — distintos de POST /api/enrolamiento/guardar (el real, usado por el huellero). Las funciones JS del flujo viejo (initFingerprintSDK, iniciarCapturaSDK, etc.) se dejaron como código de referencia, sin borrar. La tabla manual de "Tomar Asistencia" (respaldo si el huellero falla) queda intacta.
+
 # Estado actual
 
 ## Fase 1 — Aislamiento del motor biométrico `[IMPLEMENTADO]`
