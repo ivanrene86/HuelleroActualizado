@@ -1,5 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import AppIcon from '../components/AppIcon.vue'
+import FingerprintScan from '../components/FingerprintScan.vue'
 
 const props = defineProps({
   status: { type: Object, required: true },
@@ -17,6 +19,7 @@ const ultimoRechazo = computed(() => props.status.ultimoRechazo || null)
 
 const aviso = ref('')
 let avisoTimer = null
+let resultadoTimer = null
 
 watch(
   () => props.status.avisoSesion,
@@ -41,12 +44,14 @@ onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   if (avisoTimer) clearTimeout(avisoTimer)
+  if (resultadoTimer) clearTimeout(resultadoTimer)
 })
 
 async function leerHuella() {
   if (estado.value === 'leyendo') return
   estado.value = 'leyendo'
   resultado.value = null
+  if (resultadoTimer) clearTimeout(resultadoTimer)
 
   try {
     const res = await window.huellero.capturarYVerificar()
@@ -63,52 +68,76 @@ async function leerHuella() {
     resultado.value = { tipo: 'error', texto: 'No se pudo procesar la huella' }
   } finally {
     estado.value = 'idle'
+    // El módulo de escaneo vuelve solo a su estado de espera, listo para el siguiente aprendiz.
+    resultadoTimer = setTimeout(() => {
+      resultado.value = null
+    }, 2600)
   }
 }
+
+const scanState = computed(() => {
+  if (estado.value === 'leyendo') return 'scanning'
+  if (resultado.value) return resultado.value.tipo
+  return 'idle'
+})
 </script>
 
 <template>
   <div class="kiosko">
-    <div v-if="aviso" class="aviso-sesion">{{ aviso }}</div>
+    <Transition name="aviso-drop">
+      <div v-if="aviso" class="aviso-sesion">{{ aviso }}</div>
+    </Transition>
 
-    <div class="status-bar">
-      <span class="pill" :class="online ? 'ok' : (ultimoRechazo ? 'warn' : 'off')">
-        {{ online ? 'En línea' : (ultimoRechazo ? ultimoRechazo.message : 'Sin conexión') }}
+    <header class="hud">
+      <span class="hud-item" :class="online ? 'ok' : ultimoRechazo ? 'warn' : 'off'">
+        <AppIcon :name="online ? 'wifi' : 'wifi-off'" :size="16" />
+        {{ online ? 'En línea' : ultimoRechazo ? ultimoRechazo.message : 'Sin conexión' }}
       </span>
-      <span v-if="claseActiva" class="pill ok">
-        Clase activa · Ficha {{ claseActiva.codigoFicha || claseActiva.fichaId }}
+
+      <Transition name="hud-in">
+        <span v-if="claseActiva" class="hud-item ok">
+          <AppIcon name="shield-check" :size="16" />
+          Ficha {{ claseActiva.codigoFicha || claseActiva.fichaId }}
+        </span>
+      </Transition>
+
+      <span v-if="!dispositivoRegistrado" class="hud-item pending">
+        <AppIcon name="clock" :size="16" />
+        Equipo no identificado. Reintentando…
       </span>
-      <span v-if="!dispositivoRegistrado" class="pill info">
-        Equipo no identificado. Reintentando conexión…
-      </span>
-    </div>
+    </header>
 
     <main class="lector">
-      <div class="fingerprint-icon" :class="{ pulse: estado === 'leyendo' }">☝</div>
+      <FingerprintScan :state="scanState" :size="146" />
+
       <h1>{{ claseActiva ? 'Coloca tu dedo para marcar asistencia' : 'No hay clase activa' }}</h1>
-      <p v-if="claseActiva" class="hint">Apoya el dedo en el lector DigitalPersona</p>
+      <p v-if="claseActiva" class="hint">Apoya el dedo firmemente en el lector DigitalPersona</p>
 
       <button class="primary leer" :disabled="estado === 'leyendo' || !claseActiva" @click="leerHuella">
         {{ estado === 'leyendo' ? 'Leyendo…' : 'Leer huella' }}
       </button>
 
-      <div v-if="resultado" class="resultado" :class="resultado.tipo">
-        <template v-if="resultado.tipo === 'ok'">
-          <strong>Asistencia registrada</strong>
-          <span>{{ resultado.texto }}</span>
-        </template>
-        <template v-else-if="resultado.tipo === 'dup'">
-          <strong>Ya registraste tu asistencia</strong>
-          <span>{{ resultado.texto }}</span>
-        </template>
-        <template v-else>
-          <strong>No se pudo registrar</strong>
-          <span>{{ resultado.texto }}</span>
-        </template>
-      </div>
+      <Transition name="resultado-in">
+        <div v-if="resultado" class="resultado" :class="resultado.tipo">
+          <template v-if="resultado.tipo === 'ok'">
+            <strong>Asistencia registrada</strong>
+            <span>{{ resultado.texto }}</span>
+          </template>
+          <template v-else-if="resultado.tipo === 'dup'">
+            <strong>Ya registraste tu asistencia</strong>
+            <span>{{ resultado.texto }}</span>
+          </template>
+          <template v-else>
+            <strong>No se pudo registrar</strong>
+            <span>{{ resultado.texto }}</span>
+          </template>
+        </div>
+      </Transition>
     </main>
 
-    <button class="ghost acceso" title="Acceso docente" @click="emit('abrir-login')">⚙</button>
+    <button class="ghost acceso" title="Acceso docente" @click="emit('abrir-login')">
+      <AppIcon name="settings" :size="18" />
+    </button>
   </div>
 </template>
 
@@ -120,36 +149,41 @@ async function leerHuella() {
   position: relative;
 }
 
-.status-bar {
+.hud {
   display: flex;
   gap: 10px;
-  padding: 16px 20px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
 }
 
-.pill {
+.hud-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13px;
   font-weight: 600;
-  padding: 6px 14px;
+  padding: 7px 14px 7px 12px;
   border-radius: 999px;
+  font-family: var(--font-display);
 }
 
-.pill.ok {
-  background: rgba(34, 197, 94, 0.15);
+.hud-item.ok {
+  background: var(--accent-dim);
   color: var(--accent);
 }
 
-.pill.off {
-  background: rgba(239, 68, 68, 0.15);
+.hud-item.off {
+  background: var(--danger-dim);
   color: var(--danger);
 }
 
-.pill.warn {
-  background: rgba(245, 158, 11, 0.15);
+.hud-item.warn {
+  background: var(--warn-dim);
   color: var(--warn);
 }
 
-.pill.info {
-  background: #334155;
+.hud-item.pending {
+  background: var(--bg-elev-2);
   color: var(--muted);
 }
 
@@ -159,91 +193,109 @@ async function leerHuella() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 18px;
   text-align: center;
   padding: 0 24px;
 }
 
-.fingerprint-icon {
-  font-size: 96px;
-  line-height: 1;
-  opacity: 0.9;
-}
-
-.fingerprint-icon.pulse {
-  animation: pulse 1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); opacity: 0.9; }
-  50% { transform: scale(1.08); opacity: 1; }
-}
-
 h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 25px;
+  font-weight: 600;
 }
 
 .hint {
-  margin: 0 0 10px;
+  margin: -6px 0 6px;
   color: var(--muted);
+  font-size: 14px;
 }
 
 .leer {
-  min-width: 200px;
+  min-width: 210px;
   padding: 16px 32px;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 .resultado {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 12px;
-  padding: 12px 20px;
-  border-radius: 10px;
+  gap: 3px;
+  margin-top: 10px;
+  padding: 12px 22px;
+  border-radius: 12px;
   font-size: 15px;
 }
 
 .resultado.ok {
-  background: rgba(34, 197, 94, 0.12);
+  background: var(--accent-dim);
   color: var(--accent);
 }
 
 .resultado.dup {
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--warn-dim);
   color: var(--warn);
 }
 
 .resultado.error {
-  background: rgba(239, 68, 68, 0.12);
+  background: var(--danger-dim);
   color: var(--danger);
+}
+
+.resultado-in-enter-active {
+  transition: opacity 0.22s var(--ease-out), transform 0.22s var(--ease-out);
+}
+
+.resultado-in-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .acceso {
   position: absolute;
-  bottom: 14px;
-  right: 14px;
-  font-size: 18px;
-  opacity: 0.4;
+  bottom: 16px;
+  right: 16px;
+  padding: 10px;
+  border-radius: 10px;
+  opacity: 0.35;
 }
 
 .acceso:hover {
   opacity: 1;
+  background: var(--bg-elev-2);
 }
 
 .aviso-sesion {
   position: fixed;
-  top: 16px;
+  top: 18px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(245, 158, 11, 0.18);
+  background: var(--warn-dim);
   color: var(--warn);
-  padding: 10px 18px;
+  padding: 10px 20px;
   border-radius: 999px;
   font-size: 14px;
   font-weight: 600;
   z-index: 60;
   white-space: nowrap;
+}
+
+.aviso-drop-enter-active,
+.aviso-drop-leave-active {
+  transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+}
+
+.aviso-drop-enter-from,
+.aviso-drop-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+}
+
+.hud-in-enter-active {
+  transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+}
+
+.hud-in-enter-from {
+  opacity: 0;
+  transform: scale(0.9);
 }
 </style>

@@ -339,6 +339,19 @@ export function getIO() {
   return io
 }
 
+// Desconecta un dispositivo conectado informándole la razón DEVICE_DISABLED antes
+// de cerrar (mismo patrón que rechazarHELLO, pero disparado por una acción del
+// Admin sobre una conexión ya establecida, no por un HELLO entrante).
+export function desconectarDispositivo(deviceId) {
+  if (!io || !deviceId) return false
+  const socketId = dispositivosConectados.get(String(deviceId))
+  if (!socketId) return false
+  const socket = io.sockets.sockets.get(socketId)
+  if (!socket) return false
+  rechazarHELLO(socket, 'DEVICE_DISABLED', 'Este equipo fue deshabilitado por el administrador.')
+  return true
+}
+
 export function emitirNuevaAsistencia(fichaId, data) {
   if (io && fichaId) {
     io.to(`ficha_${fichaId}`).emit('docente:nueva_marcacion', data)

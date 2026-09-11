@@ -9,6 +9,7 @@ router.get('/', autenticarJWT, verificarRol(['Administrador']), dispositivoContr
 router.put('/:id/fichas', autenticarJWT, verificarRol(['Administrador']), dispositivoController.asociarFichas)
 router.put('/:id/reset-fingerprint', autenticarJWT, verificarRol(['Administrador']), dispositivoController.resetFingerprint)
 router.put('/:id/aprobar', autenticarJWT, verificarRol(['Administrador']), dispositivoController.aprobar)
+router.put('/:id/deshabilitar', autenticarJWT, verificarRol(['Administrador']), dispositivoController.deshabilitar)
 router.delete('/:id', autenticarJWT, verificarRol(['Administrador']), dispositivoController.eliminar)
 
 export default router

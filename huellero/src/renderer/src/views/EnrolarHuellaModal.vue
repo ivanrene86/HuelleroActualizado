@@ -1,5 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import AppIcon from '../components/AppIcon.vue'
+import FingerprintScan from '../components/FingerprintScan.vue'
 
 const props = defineProps({
   claseActiva: { type: Object, default: null },
@@ -44,6 +46,13 @@ const estudiantesFiltrados = computed(() => {
 const seleccionado = computed(
   () => estudiantes.value.find((e) => e._id === seleccionadoId.value) || null
 )
+
+const captureScanState = computed(() => {
+  if (estadoCaptura.value === 'capturando') return 'scanning'
+  if (estadoCaptura.value === 'ok') return 'ok'
+  if (estadoCaptura.value === 'error') return 'error'
+  return 'idle'
+})
 
 let offProgreso = null
 
@@ -129,22 +138,32 @@ async function iniciarCaptura() {
   <div class="overlay">
     <div class="modal">
       <header>
-        <h2>Registrar huella</h2>
-        <button class="ghost cerrar" @click="cerrar">✕</button>
+        <div class="titulo">
+          <AppIcon name="fingerprint" :size="19" />
+          <h2>Registrar huella</h2>
+        </div>
+        <button class="ghost cerrar" @click="cerrar">
+          <AppIcon name="x" :size="18" />
+        </button>
       </header>
 
       <div v-if="cargando" class="cuerpo centrado">
+        <AppIcon name="loader" :size="22" class="spin" />
         <p class="hint">Cargando ficha y estudiantes…</p>
       </div>
 
       <div v-else-if="errorInicial" class="cuerpo centrado">
+        <AppIcon name="alert-triangle" :size="22" />
         <p class="error">{{ errorInicial }}</p>
       </div>
 
       <template v-else>
-        <div v-if="hayClaseActiva" class="aviso">
-          Hay una clase activa en este dispositivo. Finalízala antes de enrolar huellas.
-        </div>
+        <Transition name="aviso-in">
+          <div v-if="hayClaseActiva" class="aviso">
+            <AppIcon name="alert-triangle" :size="16" />
+            Hay una clase activa en este dispositivo. Finalízala antes de enrolar huellas.
+          </div>
+        </Transition>
 
         <div class="cuerpo">
           <div class="ficha-info">
@@ -152,21 +171,26 @@ async function iniciarCaptura() {
             <strong>{{ ficha.codigoFicha }} · {{ ficha.nombrePrograma }}</strong>
           </div>
 
-          <input
-            v-model="busqueda"
-            type="text"
-            placeholder="Buscar por nombre o documento"
-            class="busqueda"
-          />
+          <div class="busqueda-wrap">
+            <AppIcon name="search" :size="16" class="busqueda-icon" />
+            <input
+              v-model="busqueda"
+              type="text"
+              placeholder="Buscar por nombre o documento"
+              class="busqueda"
+            />
+          </div>
 
           <ul class="lista">
             <li v-if="estudiantesFiltrados.length === 0" class="hint vacio">
               Sin resultados
             </li>
             <li
-              v-for="e in estudiantesFiltrados"
+              v-for="(e, i) in estudiantesFiltrados"
               :key="e._id"
               :class="{ activo: e._id === seleccionadoId }"
+              :style="{ animationDelay: Math.min(i, 8) * 22 + 'ms' }"
+              class="item-fila"
               @click="seleccionar(e._id)"
             >
               <div>
@@ -174,41 +198,60 @@ async function iniciarCaptura() {
                 <span class="hint">{{ e.tipoDocumento }} {{ e.numeroDocumento }}</span>
               </div>
               <span class="badge" :class="e.huellaEnrolada ? 'ok' : 'off'">
-                {{ e.huellaEnrolada ? `Con huella${e.dedoEnrolado ? ' · ' + e.dedoEnrolado : ''}` : 'Sin huella' }}
+                <AppIcon :name="e.huellaEnrolada ? 'check-circle' : 'x-circle'" :size="13" />
+                {{ e.huellaEnrolada ? (e.dedoEnrolado || 'Con huella') : 'Sin huella' }}
               </span>
             </li>
           </ul>
 
-          <div v-if="seleccionado" class="panel">
-            <div class="panel-titulo">
-              <strong>{{ seleccionado.nombres }} {{ seleccionado.apellidos }}</strong>
-              <span class="hint">{{ seleccionado.numeroDocumento }}</span>
+          <Transition name="panel-in">
+            <div v-if="seleccionado" class="panel">
+              <div class="panel-titulo">
+                <strong>{{ seleccionado.nombres }} {{ seleccionado.apellidos }}</strong>
+                <span class="hint">{{ seleccionado.numeroDocumento }}</span>
+              </div>
+
+              <label class="dedo">
+                Dedo a enrolar
+                <select v-model="dedo">
+                  <option value="" disabled>Selecciona un dedo</option>
+                  <option v-for="d in DEDOS" :key="d" :value="d">{{ d }}</option>
+                </select>
+              </label>
+
+              <div class="scan-wrap">
+                <FingerprintScan :state="captureScanState" :size="88" />
+              </div>
+
+              <Transition name="mensaje-in">
+                <p v-if="mensajeCaptura" class="mensaje" :class="estadoCaptura">
+                  <AppIcon
+                    v-if="estadoCaptura === 'ok'"
+                    name="check-circle"
+                    :size="15"
+                  />
+                  <AppIcon
+                    v-else-if="estadoCaptura === 'error'"
+                    name="alert-triangle"
+                    :size="15"
+                  />
+                  {{ mensajeCaptura }}
+                </p>
+              </Transition>
+
+              <button
+                class="primary"
+                :disabled="estadoCaptura === 'capturando' || hayClaseActiva"
+                @click="iniciarCaptura"
+              >
+                {{ estadoCaptura === 'capturando' ? 'Capturando…' : 'Iniciar captura' }}
+              </button>
+
+              <button v-if="estadoCaptura === 'capturando'" class="ghost" @click="cancelar">
+                Cancelar
+              </button>
             </div>
-
-            <label class="dedo">
-              Dedo a enrolar
-              <select v-model="dedo">
-                <option value="" disabled>Selecciona un dedo</option>
-                <option v-for="d in DEDOS" :key="d" :value="d">{{ d }}</option>
-              </select>
-            </label>
-
-            <button
-              class="primary"
-              :disabled="estadoCaptura === 'capturando' || hayClaseActiva"
-              @click="iniciarCaptura"
-            >
-              {{ estadoCaptura === 'capturando' ? 'Capturando…' : 'Iniciar captura' }}
-            </button>
-
-            <button v-if="estadoCaptura === 'capturando'" class="ghost" @click="cancelar">
-              Cancelar
-            </button>
-
-            <p v-if="mensajeCaptura" class="mensaje" :class="estadoCaptura">
-              {{ mensajeCaptura }}
-            </p>
-          </div>
+          </Transition>
         </div>
       </template>
     </div>
@@ -219,7 +262,7 @@ async function iniciarCaptura() {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(4, 8, 6, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -227,12 +270,13 @@ async function iniciarCaptura() {
 }
 
 .modal {
-  width: 560px;
-  max-height: 88vh;
+  width: min(560px, 92vw);
+  max-height: min(88vh, 680px);
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
-  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
   overflow: hidden;
 }
 
@@ -241,37 +285,87 @@ header {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--line);
+}
+
+.titulo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
 }
 
 h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
+  color: var(--text);
 }
 
 .cerrar {
-  font-size: 16px;
+  padding: 8px;
+  border-radius: 9px;
+}
+
+.cerrar:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
 }
 
 .cuerpo {
-  padding: 20px;
+  padding: clamp(16px, 3vh, 22px);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: clamp(10px, 2vh, 16px);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.cuerpo::-webkit-scrollbar,
+.lista::-webkit-scrollbar {
+  width: 7px;
+}
+
+.cuerpo::-webkit-scrollbar-track,
+.lista::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cuerpo::-webkit-scrollbar-thumb,
+.lista::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+
+.cuerpo::-webkit-scrollbar-thumb:hover,
+.lista::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-dim);
 }
 
 .centrado {
   align-items: center;
   text-align: center;
-  padding: 40px 20px;
+  padding: 44px 20px;
+  color: var(--muted);
 }
 
 .aviso {
-  background: rgba(245, 158, 11, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--warn-dim);
   color: var(--warn);
   padding: 12px 20px;
-  font-size: 14px;
+  font-size: 13.5px;
+}
+
+.aviso-in-enter-active {
+  transition: opacity 0.2s var(--ease-out), transform 0.2s var(--ease-out);
+}
+
+.aviso-in-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .ficha-info {
@@ -280,35 +374,68 @@ h2 {
   gap: 2px;
 }
 
+.busqueda-wrap {
+  position: relative;
+}
+
+.busqueda-icon {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .busqueda {
-  width: 100%;
+  padding-left: 38px;
 }
 
 .lista {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 260px;
+  max-height: min(220px, 24vh);
+  flex-shrink: 0;
   overflow-y: auto;
-  border: 1px solid #334155;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
-.lista li {
+.item-fila {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 11px 14px;
   cursor: pointer;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--line);
+  animation: item-in 0.22s var(--ease-out) backwards;
+  transition: background-color 0.12s var(--ease-out);
 }
 
-.lista li:last-child {
+.item-fila:hover {
+  background: var(--bg-elev-2);
+}
+
+.item-fila:last-child {
   border-bottom: none;
 }
 
-.lista li.activo {
-  background: rgba(34, 197, 94, 0.12);
+.item-fila.activo {
+  background: var(--accent-dim);
+}
+
+@keyframes item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .lista li > div {
@@ -318,34 +445,49 @@ h2 {
 }
 
 .vacio {
-  padding: 16px;
+  padding: 18px;
   text-align: center;
 }
 
 .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
-  padding: 4px 10px;
+  font-weight: 600;
+  padding: 5px 11px;
   border-radius: 999px;
   white-space: nowrap;
 }
 
 .badge.ok {
-  background: rgba(34, 197, 94, 0.15);
+  background: var(--accent-dim);
   color: var(--accent);
 }
 
 .badge.off {
-  background: #334155;
+  background: var(--bg-elev-2);
   color: var(--muted);
 }
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  padding: 16px;
+  align-items: stretch;
+  flex-shrink: 0;
+  gap: clamp(10px, 1.6vh, 14px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: clamp(14px, 2.4vh, 20px);
+}
+
+.panel-in-enter-active {
+  transition: opacity 0.24s var(--ease-out), transform 0.24s var(--ease-out);
+}
+
+.panel-in-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 .panel-titulo {
@@ -362,19 +504,20 @@ h2 {
   color: var(--muted);
 }
 
-select {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #334155;
-  background: #0b1220;
-  color: var(--text);
-  font-size: 14px;
+.scan-wrap {
+  display: flex;
+  justify-content: center;
+  padding: clamp(6px, 1.4vh, 14px) 0;
 }
 
 .mensaje {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   margin: 0;
   font-size: 14px;
+  text-align: center;
 }
 
 .mensaje.ok {
@@ -386,7 +529,17 @@ select {
 }
 
 .mensaje.capturando {
-  color: var(--muted);
+  color: var(--text);
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.mensaje-in-enter-active {
+  transition: opacity 0.18s var(--ease-out);
+}
+
+.mensaje-in-enter-from {
+  opacity: 0;
 }
 
 .hint {
@@ -397,5 +550,15 @@ select {
 .error {
   color: var(--danger);
   font-size: 14px;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

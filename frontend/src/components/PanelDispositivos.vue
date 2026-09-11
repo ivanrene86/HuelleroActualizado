@@ -148,6 +148,35 @@ async function aprobarDispositivo(device) {
   }
 }
 
+async function deshabilitarDispositivo(device) {
+  if (!confirm(`¿Deshabilitar "${deviceLabel(device)}"?\n\nEl dispositivo perderá el acceso de inmediato si está conectado.`)) {
+    return
+  }
+  savingId.value = device._id
+  try {
+    await api.dispositivos.deshabilitar(device._id)
+    showToast('Dispositivo deshabilitado')
+    await loadDispositivos()
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'No se pudo deshabilitar'), 'error')
+  } finally {
+    savingId.value = null
+  }
+}
+
+async function reactivarDispositivo(device) {
+  savingId.value = device._id
+  try {
+    await api.dispositivos.aprobar(device._id)
+    showToast('Dispositivo reactivado')
+    await loadDispositivos()
+  } catch (e) {
+    showToast('Error: ' + (e.message || 'No se pudo reactivar'), 'error')
+  } finally {
+    savingId.value = null
+  }
+}
+
 async function rechazarDispositivo(device) {
   if (!confirm(`¿Rechazar y eliminar "${deviceLabel(device)}"?\n\nEsta acción es permanente y borra el dispositivo.`)) {
     return
@@ -230,6 +259,9 @@ function formatFecha(iso) {
             <button class="btn btn-sm btn-reset" :disabled="savingId === d._id" @click="resetFingerprint(d)">
               🔄 Resetear identidad de hardware
             </button>
+            <button class="btn btn-danger btn-sm" :disabled="savingId === d._id" @click="deshabilitarDispositivo(d)">
+              🚫 Deshabilitar
+            </button>
           </div>
         </div>
 
@@ -275,6 +307,11 @@ function formatFecha(iso) {
             <h3>{{ d.hostname || deviceLabel(d) }}</h3>
             <span class="device-id">{{ d.deviceId }}</span>
             <span class="badge badge-danger">Inactivo</span>
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-success btn-sm" :disabled="savingId === d._id" @click="reactivarDispositivo(d)">
+              ✅ Reactivar
+            </button>
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import AppIcon from '../components/AppIcon.vue'
 import EnrolarHuellaModal from './EnrolarHuellaModal.vue'
 
 const props = defineProps({
@@ -18,26 +19,45 @@ const modalAbierto = ref(false)
 <template>
   <div class="docente">
     <header>
-      <div>
-        <h1>Modo docente</h1>
-        <span class="nombre">{{ nombre }} · {{ rolDetallado }}</span>
+      <div class="quien">
+        <div class="avatar">
+          <AppIcon name="user" :size="20" />
+        </div>
+        <div class="quien-texto">
+          <h1>Modo docente</h1>
+          <span class="nombre">{{ nombre }} · {{ rolDetallado }}</span>
+        </div>
       </div>
       <div class="acciones">
-        <button v-if="esLider" class="primary" @click="modalAbierto = true">Registrar huella</button>
-        <button class="secondary" @click="emit('logout')">Cerrar sesión</button>
+        <button v-if="esLider" class="primary" @click="modalAbierto = true">
+          <AppIcon name="fingerprint" :size="17" />
+          Registrar huella
+        </button>
+        <button class="secondary" @click="emit('logout')">
+          <AppIcon name="log-out" :size="16" />
+          Cerrar sesión
+        </button>
       </div>
     </header>
 
     <main class="contenido">
-      <p v-if="esLider">Como líder puedes registrar las huellas de los estudiantes de tu ficha.</p>
-      <p v-else class="hint">Solo los instructores líderes pueden registrar huellas.</p>
+      <div class="info" v-if="esLider">
+        <AppIcon name="shield-check" :size="30" />
+        <p>Como líder de ficha, puedes registrar las huellas de tus estudiantes.</p>
+      </div>
+      <div class="info muted" v-else>
+        <AppIcon name="clock" :size="30" />
+        <p>Solo los instructores líderes pueden registrar huellas.</p>
+      </div>
     </main>
 
-    <EnrolarHuellaModal
-      v-if="modalAbierto"
-      :clase-activa="status.claseActiva"
-      @close="modalAbierto = false"
-    />
+    <Transition name="modal-pop">
+      <EnrolarHuellaModal
+        v-if="modalAbierto"
+        :clase-activa="status.claseActiva"
+        @close="modalAbierto = false"
+      />
+    </Transition>
   </div>
 </template>
 
@@ -52,24 +72,42 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 24px;
-  border-bottom: 1px solid #1e293b;
+  padding: 20px 26px;
+  border-bottom: 1px solid var(--line);
 }
 
-header div {
+.quien {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--bg-elev-2);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quien-texto {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 19px;
 }
 
 .nombre {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13.5px;
 }
 
 .acciones {
@@ -80,10 +118,42 @@ h1 {
 
 .contenido {
   flex: 1;
-  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 26px;
 }
 
-.hint {
+.info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 400px;
+  text-align: center;
+  color: var(--accent);
+  animation: rise 0.3s var(--ease-out);
+}
+
+.info.muted {
   color: var(--muted);
+}
+
+.info p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

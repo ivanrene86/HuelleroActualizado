@@ -3,6 +3,7 @@ import bcryptjs from 'bcryptjs'
 import mongoose from 'mongoose'
 import Dispositivo from '../models/Dispositivo.js'
 import Ficha from '../models/Ficha.js'
+import { desconectarDispositivo } from '../services/socketService.js'
 
 export async function registrar(req, res) {
   try {
@@ -128,6 +129,29 @@ export async function aprobar(req, res) {
     await dispositivo.save()
 
     res.json({ ok: true, message: 'Dispositivo aprobado.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+export async function deshabilitar(req, res) {
+  try {
+    const { id } = req.params
+    const dispositivo = await Dispositivo.findById(id)
+    if (!dispositivo) {
+      return res.status(404).json({ error: 'Dispositivo no encontrado' })
+    }
+
+    // activo=false sin tocar aprobadoEn: así se distingue de un "pendiente nuevo"
+    // (aprobadoEn:null) en el HELLO.
+    dispositivo.activo = false
+    await dispositivo.save()
+
+    // Si está conectado en este momento, desconéctalo al instante (el kiosko
+    // mostrará "Este equipo fue deshabilitado por el administrador").
+    desconectarDispositivo(dispositivo.deviceId)
+
+    res.json({ ok: true, message: 'Dispositivo deshabilitado.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
