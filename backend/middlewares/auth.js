@@ -83,6 +83,36 @@ export function verificarRol(rolesPermitidos = []) {
 }
 
 /**
+ * Middleware de autorización: permite el acceso si el rol está en la lista,
+ * o si se trata de un Instructor Líder (rol 'Instructor' + esLider === true).
+ * Pensado para rutas que deben estar disponibles para Administrador y para
+ * el Instructor Líder, pero no para el Instructor Común.
+ * @param {Array<string>} rolesPermitidos Lista de roles permitidos (ej. ['Administrador'])
+ */
+export function verificarRolOLider(rolesPermitidos = []) {
+  return (req, res, next) => {
+    if (!rolesPermitidos || rolesPermitidos.length === 0) {
+      return next()
+    }
+
+    const rolUsuario = req.usuario?.rol
+    const esLider = req.usuario?.esLider === true
+
+    const permitidoPorRol = rolUsuario && rolesPermitidos.includes(rolUsuario)
+    const permitidoPorLider = rolUsuario === 'Instructor' && esLider
+
+    if (!permitidoPorRol && !permitidoPorLider) {
+      return res.status(403).json({
+        error: `Acceso restringido. Se requiere uno de los siguientes roles: ${rolesPermitidos.join(', ')}`,
+        code: 'FORBIDDEN'
+      })
+    }
+
+    next()
+  }
+}
+
+/**
  * Middleware de autenticación opcional
  * Si hay un token presente lo decodifica y lo adjunta a req.usuario, pero no bloquea si no lo hay.
  */

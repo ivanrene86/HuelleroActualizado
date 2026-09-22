@@ -1,6 +1,23 @@
+import mongoose from 'mongoose'
 import Instructor from '../models/Instructor.js'
 import Ficha from '../models/Ficha.js'
 import { hashPassword } from '../services/passwordService.js'
+
+// Resuelve un fichaId (ObjectId o codigoFicha) a su documento Ficha.
+// Mismo patrón de resolución usado en estudianteController.updateEstudiante.
+async function resolverFicha(fichaId) {
+  if (!fichaId) return null
+  const query = []
+  if (mongoose.Types.ObjectId.isValid(fichaId)) {
+    query.push({ _id: fichaId })
+  }
+  query.push({ codigoFicha: String(fichaId).trim() })
+  try {
+    return await Ficha.findOne({ $or: query })
+  } catch (_) {
+    return null
+  }
+}
 
 export async function getInstructores(req, res) {
   try {
@@ -76,6 +93,36 @@ export async function importarInstructores(req, res) {
     const { instructores } = req.body
     if (!instructores || !Array.isArray(instructores)) {
       return res.status(400).json({ error: 'Se requiere un array de instructores' })
+    }
+
+    const esAdmin = req.usuario?.rol === 'Administrador'
+    if (!esAdmin) {
+      // Docente Líder: solo puede asignar instructores a fichas de las que es líder.
+      const noAutorizadas = []
+      for (const inst of instructores) {
+        const { fichaId, fichas, esLider } = inst
+        let listaFichas = []
+        if (Array.isArray(fichas) && fichas.length > 0) {
+          listaFichas = fichas
+        } else if (fichaId) {
+          listaFichas = [{ fichaId, esLider: !!esLider }]
+        }
+        for (const item of listaFichas) {
+          const targetFichaId = item.fichaId || item
+          if (!targetFichaId) continue
+          const ficha = await resolverFicha(targetFichaId)
+          const liderId = ficha ? String(ficha.instructorLiderId || '') : ''
+          if (!ficha || liderId !== String(req.usuario.id)) {
+            noAutorizadas.push(ficha ? ficha.codigoFicha : String(targetFichaId))
+          }
+        }
+      }
+      if (noAutorizadas.length > 0) {
+        const unicas = [...new Set(noAutorizadas)]
+        return res.status(403).json({
+          error: `No tienes permiso para asignar instructores a las siguientes fichas (debes ser su instructor líder): ${unicas.join(', ')}`
+        })
+      }
     }
 
     let creados = 0
