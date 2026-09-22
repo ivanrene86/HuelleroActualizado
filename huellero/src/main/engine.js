@@ -636,6 +636,36 @@ export async function enrolarEstudiante({ estudianteId, fichaId, dedo, nombre, s
       return { ok: false, error: completo.error }
     }
 
+    // Chequeo de huella duplicada ANTES de guardar: la biometria vive en el huellero.
+    // Se compara contra las plantillas ya enroladas de la ficha (ambos dedos).
+    try {
+      await descargarPlantillas(fichaId)
+    } catch (err) {
+      console.error(`[engine] No se pudo refrescar plantillas de ficha (uso cache existente): ${err.message}`)
+    }
+    const plantillasFicha = await store.getPlantillasFicha(fichaId)
+    const plantillasMapeadas = (plantillasFicha || []).map((p) => ({
+      _id: p.estudianteId,
+      nombres: p.nombres,
+      apellidos: p.apellidos,
+      tipoDocumento: p.tipoDocumento,
+      numeroDocumento: p.numeroDocumento,
+      huellaTemplate: p.template || '',
+      huellaTemplate2: p.template2 || '',
+    }))
+
+    const duplicado = fingerprint.checkDuplicateFingerprint(completo.template, plantillasMapeadas, estudianteId)
+    if (duplicado.isDuplicate) {
+      const dupStudent = duplicado.student
+      const doc = dupStudent.tipoDocumento && dupStudent.numeroDocumento
+        ? ` (${dupStudent.tipoDocumento} ${dupStudent.numeroDocumento})`
+        : ''
+      const mensaje = `Esta huella ya está registrada a nombre de "${dupStudent.nombres} ${dupStudent.apellidos}"${doc}`
+      console.error(`[engine] Enrolamiento abortado: huella duplicada de ${dupStudent.nombres} ${dupStudent.apellidos} (score=${duplicado.score})`)
+      notificarProgresoEnrolamiento({ fase: 'cancelado', actual, total, mensaje })
+      return { ok: false, error: mensaje }
+    }
+
     notificarProgresoEnrolamiento({ fase: 'guardando', actual, total, mensaje: 'Guardando huella…' })
     const guardado = await guardarTemplate({ estudianteId, fichaId, dedo, template: completo.template, slot })
 

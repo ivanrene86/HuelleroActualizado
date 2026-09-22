@@ -2,7 +2,7 @@ import { Router } from 'express'
 import * as estudianteController from '../controllers/estudianteController.js'
 import * as permisoDatosController from '../controllers/permisoDatosController.js'
 import { validarCamposRequeridos, validarEmail } from '../middlewares/validator.js'
-import { autenticarJWT, verificarRol, autenticarOpcional } from '../middlewares/auth.js'
+import { autenticarJWT, verificarRol, verificarRolOLider, autenticarOpcional } from '../middlewares/auth.js'
 
 const router = Router()
 
@@ -33,7 +33,7 @@ router.delete('/:id',
 
 router.post('/importar',
   autenticarJWT,
-  verificarRol(['Administrador']),
+  verificarRolOLider(['Administrador']),
   estudianteController.importarEstudiantes
 )
 

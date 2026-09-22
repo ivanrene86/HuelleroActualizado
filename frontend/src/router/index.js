@@ -29,7 +29,7 @@ export const routes = {
   estudiantes: { component: Estudiantes, label: 'Estudiantes', roles: ['Administrador', 'Instructor'] },
   fichas: { component: Fichas, label: 'Fichas', roles: ['Administrador'] },
   dispositivos: { component: PanelDispositivos, label: 'Dispositivos', roles: ['Administrador'] },
-  importar: { component: ImportarUsuarios, label: 'Importar / Carga Masiva', roles: ['Administrador', 'Instructor'] },
+  importar: { component: ImportarUsuarios, label: 'Importar / Carga Masiva', roles: ['Administrador', 'Instructor'], soloLider: true },
   reportes: { component: Reportes, label: 'Reportes', roles: ['Administrador', 'Instructor'] },
   seguimiento: { component: SeguimientoInasistencias, label: 'Seguimiento Inasistencias', roles: ['Administrador', 'Instructor'] },
   diasFestivos: { component: DiasFestivos, label: 'Días Inhabilitados', roles: ['Administrador'] },
@@ -55,12 +55,13 @@ export function getCurrentView() {
   return currentView
 }
 
-export function viewsForRole(rol) {
+export function viewsForRole(rol, esLider) {
   const result = {}
   for (const key in routes) {
-    if (routes[key].roles.includes(rol)) {
-      result[key] = routes[key]
-    }
+    const ruta = routes[key]
+    if (!ruta.roles.includes(rol)) continue
+    if (ruta.soloLider && rol === 'Instructor' && !esLider) continue
+    result[key] = ruta
   }
   return result
 }

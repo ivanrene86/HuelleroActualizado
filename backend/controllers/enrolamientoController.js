@@ -18,23 +18,6 @@ export async function guardarTemplate(req, res) {
       return res.status(404).json({ success: false, error: 'Estudiante no encontrado' })
     }
 
-    // Validación de duplicado exacto en base de datos
-    const otro = await Estudiante.findOne({
-      _id: { $ne: estudianteId },
-      huellaEnrolada: true,
-      $or: [
-        { huellaTemplate: { $ne: '' } },
-        { huellaTemplate2: { $ne: '' } },
-      ],
-    })
-
-    if (otro) {
-      return res.status(409).json({
-        success: false,
-        error: `Esta huella ya está registrada a nombre de "${otro.nombres} ${otro.apellidos}" (${otro.tipoDocumento} ${otro.numeroDocumento})`,
-      })
-    }
-
     const slot1Libre = !estudiante.huellaTemplate
     const slot2Libre = !estudiante.huellaTemplate2
 

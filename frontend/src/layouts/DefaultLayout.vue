@@ -17,7 +17,7 @@ const drawerMini = ref(false)
 
 const currentView = getCurrentView()
 
-const viewsDisponibles = computed(() => viewsForRole(usuario.value?.rol || 'Administrador'))
+const viewsDisponibles = computed(() => viewsForRole(usuario.value?.rol || 'Administrador', usuario.value?.esLider))
 const currentComponent = computed(() => currentComponentFor(usuario.value?.rol || 'Administrador'))
 
 // Ícono (Material Icons, vía Quasar) asociado a cada vista del menú.

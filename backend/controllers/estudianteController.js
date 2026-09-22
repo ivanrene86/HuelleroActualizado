@@ -183,6 +183,26 @@ export async function importarEstudiantes(req, res) {
     if (!estudiantes || !Array.isArray(estudiantes)) {
       return res.status(400).json({ error: 'Se requiere un array de estudiantes' })
     }
+
+    const esAdmin = req.usuario?.rol === 'Administrador'
+    if (!esAdmin) {
+      // Docente Líder: solo puede importar estudiantes a fichas de las que es líder.
+      const noAutorizadas = []
+      for (const e of estudiantes) {
+        const ficha = await resolverFicha(e.fichaId)
+        const liderId = ficha ? String(ficha.instructorLiderId || '') : ''
+        if (!ficha || liderId !== String(req.usuario.id)) {
+          noAutorizadas.push(ficha ? ficha.codigoFicha : String(e.fichaId || 'sin ficha'))
+        }
+      }
+      if (noAutorizadas.length > 0) {
+        const unicas = [...new Set(noAutorizadas)]
+        return res.status(403).json({
+          error: `No tienes permiso para importar estudiantes a las siguientes fichas (debes ser su instructor líder): ${unicas.join(', ')}`
+        })
+      }
+    }
+
     const result = await Estudiante.insertMany(estudiantes)
     res.status(201).json({ ok: true, count: result.length })
   } catch (err) {
