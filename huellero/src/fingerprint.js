@@ -369,6 +369,36 @@ export function verifyFingerprint(imageBase64, enrolledStudents, dpi = 500) {
   return { match: false, bestScore: bestScore !== 0xFFFFFFFF ? bestScore : null }
 }
 
+export function checkDuplicateOwnTemplate(newTemplateBase64, ownTemplate1, ownTemplate2, targetSlot) {
+  if (!newTemplateBase64) return { isDuplicate: false }
+
+  const otherSlot = targetSlot === 1 ? 2 : 1
+  const otherTemplate = otherSlot === 1 ? ownTemplate1 : ownTemplate2
+  if (!otherTemplate) return { isDuplicate: false }
+
+  let newTemplateBytes
+  try {
+    newTemplateBytes = bufFromBase64(newTemplateBase64)
+  } catch (e) {
+    return { isDuplicate: false }
+  }
+
+  let existingBytes
+  try {
+    existingBytes = bufFromBase64(otherTemplate)
+  } catch (e) {
+    return { isDuplicate: false }
+  }
+
+  const { ok, score } = compareFmds(newTemplateBytes, existingBytes)
+  if (ok && score <= MATCH_THRESHOLD) {
+    console.log(`[fingerprint] ⚠️ DUPLICADO PROPIO: la huella coincide con la Huella ${otherSlot} del mismo estudiante (score=${score})`)
+    return { isDuplicate: true, otherSlot, score }
+  }
+
+  return { isDuplicate: false }
+}
+
 export function checkDuplicateFingerprint(newTemplateBase64, enrolledStudents, currentStudentId) {
   if (!newTemplateBase64 || !enrolledStudents || enrolledStudents.length === 0) {
     return { isDuplicate: false }
