@@ -6,23 +6,47 @@ function getSocketUrl() {
   const host = window.location.hostname
   const protocol = window.location.protocol
   const fullHost = window.location.host
-  
+  const port = window.location.port
+
   // Soporte para túneles de VS Code / Dev Tunnels
   if (fullHost.includes('-5173.')) {
     return `${protocol}//${fullHost.replace('-5173.', '-3000.')}`
   }
   
-  return `${protocol}//${host}:3000`
+  // En desarrollo local con servidor Vite separado en :5173
+  if (port === '5173') {
+    return `${protocol}//${host}:3000`
+  }
+
+  // En producción servido desde el mismo dominio
+  return window.location.origin
 }
 
 const SOCKET_URL = getSocketUrl()
+
+function getToken() {
+  if (typeof window === 'undefined') return null
+  return sessionStorage.getItem('auth_token') || null
+}
 
 export const socket = io(SOCKET_URL, {
   autoConnect: true,
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000,
+  auth: { token: getToken() },
 })
+
+// Recalcula el token del handshake y fuerza una reconexión para que el servidor
+// lo vea. Se llama tras login/logout (el token vive en sessionStorage, que ya
+// está disponible al importar el módulo en un reload, pero NO al loguearse).
+export function reconectarConAuth() {
+  socket.auth = { token: getToken() }
+  if (socket.connected) {
+    socket.disconnect()
+  }
+  socket.connect()
+}
 
 export function unirseASalaFicha(fichaId, rol = 'docente') {
   if (!fichaId) return
@@ -40,10 +64,6 @@ export function iniciarAsistenciaRemota(datos) {
 
 export function cerrarAsistenciaRemota(fichaId) {
   socket.emit('docente:cerrar_asistencia', { fichaId: String(fichaId) })
-}
-
-export function notificarMarcacionKiosco(datos) {
-  socket.emit('kiosco:asistencia_marcada', datos)
 }
 
 export default socket
